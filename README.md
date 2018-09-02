@@ -10,7 +10,7 @@ Rust implementation of bgzip
 TODO
 ----
 
-* Writer
+* Multi-thread writer
 * Binary search to find content block
 
 Author
