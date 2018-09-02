@@ -12,7 +12,6 @@ TODO
 ----
 
 * Multi-thread writer
-* Binary search to find content block
 
 Author
 ------
