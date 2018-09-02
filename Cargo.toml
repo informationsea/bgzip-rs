@@ -9,6 +9,8 @@ repository = "https://github.com/informationsea/bgzip-rs"
 license = "MIT"
 keywords = ["bioinformatics", "bgzip", "gzip", "compression"]
 categories = ["compression"]
+
+[badges]
 travis-ci = { repository = "informationsea/bgzip-rs", branch = "master" }
 appveyor = { repository = "informationsea/bgzip-rs", branch = "master", service = "github" }
 maintenance = { status = "experimental" }
