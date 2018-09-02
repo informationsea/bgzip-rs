@@ -24,6 +24,7 @@ use flate2;
 use std::cmp::min;
 use std::io;
 use std::io::prelude::*;
+use std::ops::Range;
 use std::usize;
 
 use super::header::*;
@@ -42,9 +43,20 @@ pub struct BGzReader<R: io::Read + io::Seek> {
 #[derive(Debug, PartialEq, Eq)]
 struct BGzBlock {
     header: BGzHeader,
-    uncompressed_size: u64,
-    uncompressed_start: u64,
+    uncompressed_range: Range<u64>,
     block_start: u64,
+}
+
+impl super::Region for BGzBlock {
+    type T = u64;
+
+    fn start(&self) -> u64 {
+        self.uncompressed_range.start
+    }
+
+    fn end(&self) -> u64 {
+        self.uncompressed_range.end
+    }
 }
 
 impl<R: io::Read + io::Seek> Read for BGzReader<R> {
@@ -100,8 +112,7 @@ impl<R: io::Read + io::Seek> Read for BGzReader<R> {
 
 impl<R: io::Read + io::Seek> Seek for BGzReader<R> {
     fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
-        let end = (self.headers[self.headers.len() - 1].uncompressed_size
-            + self.headers[self.headers.len() - 1].uncompressed_start) as i64;
+        let end = (self.headers[self.headers.len() - 1].uncompressed_range.end) as i64;
 
         let mut new_pos: i64 = match pos {
             io::SeekFrom::Start(x) => x as i64,
@@ -116,16 +127,7 @@ impl<R: io::Read + io::Seek> Seek for BGzReader<R> {
             return Err(io::Error::new(io::ErrorKind::Other, "invalid position"));
         }
         let new_pos = new_pos as u64;
-
-        // TODO: use binary search
-        let mut new_block = self.headers.len();
-        for (i, one) in self.headers.iter().enumerate() {
-            if one.uncompressed_start <= new_pos
-                && new_pos < one.uncompressed_start + one.uncompressed_size
-            {
-                new_block = i;
-            }
-        }
+        let new_block = super::search_region(&self.headers, new_pos).unwrap_or(self.headers.len());
 
         self.seek_helper(new_block, new_pos)?;
 
@@ -165,7 +167,7 @@ impl<R: io::Read + io::Seek> BGzReader<R> {
             deflater.read_to_end(&mut self.current_data)?;
         }
 
-        self.pos_in_block = new_pos - current_block.uncompressed_start;
+        self.pos_in_block = new_pos - current_block.uncompressed_range.start;
 
         Ok(())
     }
@@ -187,8 +189,7 @@ impl<R: io::Read + io::Seek> BGzReader<R> {
             let uncompressed_size = read_le_u32(&mut reader)?;
 
             headers.push(BGzBlock {
-                uncompressed_start: uncompressed_pos,
-                uncompressed_size: uncompressed_size as u64,
+                uncompressed_range: uncompressed_pos..(uncompressed_size as u64 + uncompressed_pos),
                 block_start: pos - (compressed_size + 4) as u64,
                 header: new_header,
             });
