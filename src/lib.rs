@@ -199,7 +199,7 @@ impl<R: io::Read + io::Seek> BGzReader<R> {
         };
 
         //reader.seek(io::SeekFrom::Start(0))?;
-        reader.seek_helper(0, 0);
+        reader.seek_helper(0, 0)?;
 
         Ok(reader)
     }
