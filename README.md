@@ -5,6 +5,12 @@ bgzip-rs
 
 Rust implementation of bgzip
 
+TODO
+----
+
+* Writer
+* Binary search to find content block
+
 Author
 ------
 
