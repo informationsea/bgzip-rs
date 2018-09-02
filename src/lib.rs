@@ -1,5 +1,6 @@
 extern crate flate2;
 
+use std::cmp::min;
 use std::io;
 use std::io::prelude::*;
 
@@ -45,20 +46,58 @@ pub struct BGzExtra {
 impl<R: io::Read + io::Seek> Read for BGzReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut read_len = 0usize;
-        for i in 0..buf.len() {
-            if i + (self.pos_in_block as usize) < self.current_data.len() {
-                buf[i] = self.current_data[i + (self.pos_in_block as usize)];
-                read_len += 1;
+        let mut buf_pos = 0usize;
+
+        while buf_pos < buf.len() {
+            let copyable = min(
+                buf.len() - buf_pos,
+                self.current_data.len() - self.pos_in_block as usize,
+            );
+            //println!(
+            //    "{} {} {} {} {} {}",
+            //    buf_pos,
+            //    buf.len(),
+            //    self.pos_in_block,
+            //    self.current_data.len(),
+            //    self.current_pos,
+            //    copyable
+            //);
+
+            if copyable == 0 {
+                let current_block = self.current_block;
+                let current_pos = self.current_pos;
+                //println!("seeking {} {}", current_block + 1, current_pos);
+                let result = self.seek_helper(current_block + 1, current_pos);
+                if let Err(e) = result {
+                    if e.kind() == io::ErrorKind::UnexpectedEof {
+                        if read_len == 0 {
+                            return Err(e);
+                        } else {
+                            return Ok(read_len);
+                        }
+                    } else {
+                        return Err(e);
+                    }
+                }
+            } else {
+                for i in 0..copyable {
+                    buf[buf_pos + i] = self.current_data[i + (self.pos_in_block as usize)];
+                }
+                read_len += copyable;
+                buf_pos += copyable;
+                self.pos_in_block += copyable as u64;
+                self.current_pos += copyable as u64;
             }
         }
+
         Ok(read_len)
     }
 }
 
 impl<R: io::Read + io::Seek> Seek for BGzReader<R> {
     fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
-        let last = &self.headers[self.headers.len() - 1];
-        let end = (last.uncompressed_size + last.uncompressed_start) as i64;
+        let end = (self.headers[self.headers.len() - 1].uncompressed_size
+            + self.headers[self.headers.len() - 1].uncompressed_start) as i64;
 
         let mut new_pos: i64 = match pos {
             io::SeekFrom::Start(x) => x as i64,
@@ -82,6 +121,18 @@ impl<R: io::Read + io::Seek> Seek for BGzReader<R> {
             {
                 new_block = i;
             }
+        }
+
+        self.seek_helper(new_block, new_pos)?;
+
+        Ok(new_pos)
+    }
+}
+
+impl<R: io::Read + io::Seek> BGzReader<R> {
+    fn seek_helper(&mut self, new_block: usize, new_pos: u64) -> io::Result<()> {
+        if self.headers.len() <= new_block {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "end of bgzip"));
         }
 
         self.current_block = new_block;
@@ -110,11 +161,9 @@ impl<R: io::Read + io::Seek> Seek for BGzReader<R> {
 
         self.pos_in_block = new_pos - current_block.uncompressed_start;
 
-        Ok(new_pos)
+        Ok(())
     }
-}
 
-impl<R: io::Read + io::Seek> BGzReader<R> {
     pub fn new(mut reader: R) -> io::Result<BGzReader<R>> {
         let mut headers = Vec::new();
         let mut uncompressed_pos = 0;
@@ -149,7 +198,8 @@ impl<R: io::Read + io::Seek> BGzReader<R> {
             pos_in_block: 0,
         };
 
-        reader.seek(io::SeekFrom::Start(0))?;
+        //reader.seek(io::SeekFrom::Start(0))?;
+        reader.seek_helper(0, 0);
 
         Ok(reader)
     }
@@ -350,10 +400,43 @@ mod tests {
 
         let mut data = [0; 10];
         reader.seek(io::SeekFrom::Start(200)).unwrap();
-        reader.read_exact(&mut data).unwrap();
+        assert_eq!(10, reader.read(&mut data).unwrap());
         assert_eq!(b"ield_lates", &data);
 
-        // TODO: test inter-block request
+        // end of block
+        reader.seek(io::SeekFrom::Start(65270)).unwrap();
+        assert_eq!(10, reader.read(&mut data).unwrap());
+        assert_eq!(b"1549439,0.", &data);
+
+        // start of block
+        reader.seek(io::SeekFrom::Start(65280)).unwrap();
+        assert_eq!(10, reader.read(&mut data).unwrap());
+        assert_eq!(b"5314092762", &data);
+
+        // inter-block
+        reader.seek(io::SeekFrom::Start(65275)).unwrap();
+        assert_eq!(10, reader.read(&mut data).unwrap());
+        assert_eq!(b"39,0.53140", &data);
+
+        // inter-block
+        reader.seek(io::SeekFrom::Start(195835)).unwrap();
+        assert_eq!(10, reader.read(&mut data).unwrap());
+        assert_eq!(b"0.41874522", &data);
+
+        // inter-block
+        reader.seek(io::SeekFrom::Start(65270)).unwrap();
+        assert_eq!(10, reader.read(&mut data).unwrap());
+        assert_eq!(b"1549439,0.", &data);
+        assert_eq!(10, reader.read(&mut data).unwrap());
+        assert_eq!(b"5314092762", &data);
+
+        // end of bgzip
+        reader.seek(io::SeekFrom::Start(17229634)).unwrap();
+        assert_eq!(5, reader.read(&mut data).unwrap());
+        assert_eq!(&b"ON=1\n"[..], &data[..5]);
+
+        let eof = reader.read(&mut data);
+        assert_eq!(eof.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
 
         //println!("reader : {:?}", reader);
     }
