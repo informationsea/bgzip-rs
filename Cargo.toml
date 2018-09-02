@@ -1,6 +1,6 @@
 [package]
 name = "bgzip"
-version = "0.0.2"
+version = "0.0.3"
 authors = ["OKAMURA, Yasunobu <okamura@informationsea.info>"]
 readme = "README.md"
 description = "Rust implentation of bgzip"
