@@ -2,6 +2,13 @@
 name = "bgzip"
 version = "0.0.1"
 authors = ["OKAMURA, Yasunobu <okamura@informationsea.info>"]
+description = "Rust implentation of bgzip"
+homepage = "https://github.com/informationsea/bgzip-rs"
+repository = "https://github.com/informationsea/bgzip-rs"
+license = "MIT"
+keywords = ["bioinformatics", "bgzip", "gzip", "compression"]
+categories = ["compression"]
+travis-ci = { repository = "informationsea/bgzip-rs", branch = "master" }
 
 [dependencies]
 flate2 = "*"
