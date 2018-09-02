@@ -11,4 +11,4 @@ categories = ["compression"]
 travis-ci = { repository = "informationsea/bgzip-rs", branch = "master" }
 
 [dependencies]
-flate2 = "*"
+flate2 = "1"
