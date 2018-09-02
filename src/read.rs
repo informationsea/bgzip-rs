@@ -73,11 +73,11 @@ impl<R: io::Read + io::Seek> Read for BGzReader<R> {
                 let result = self.seek_helper(current_block + 1, current_pos);
                 if let Err(e) = result {
                     if e.kind() == io::ErrorKind::UnexpectedEof {
-                        if read_len == 0 {
-                            return Err(e);
-                        } else {
-                            return Ok(read_len);
-                        }
+                        //if read_len == 0 {
+                        //    return Err(e);
+                        //} else {
+                        return Ok(read_len);
+                    //}
                     } else {
                         return Err(e);
                     }
@@ -259,7 +259,8 @@ mod tests {
         assert_eq!(&b"ON=1\n"[..], &data[..5]);
 
         let eof = reader.read(&mut data);
-        assert_eq!(eof.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(0, eof.unwrap());
+        //assert_eq!(eof.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
 
         //println!("reader : {:?}", reader);
     }

@@ -192,7 +192,8 @@ mod test {
             assert_eq!(&b"BCDEF"[..], &data[..5]);
 
             let eof = reader.read(&mut data);
-            assert_eq!(eof.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+            assert_eq!(0, eof.unwrap());
+            //assert_eq!(eof.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
         }
 
         Ok(())
