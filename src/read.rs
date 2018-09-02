@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn read_bgzip2() {
-        let mut f = io::BufReader::new(
+        let f = io::BufReader::new(
             fs::File::open("testfiles/common_all_20180418_half.vcf.gz").unwrap(),
         );
         let mut reader = super::BGzReader::new(f).unwrap();

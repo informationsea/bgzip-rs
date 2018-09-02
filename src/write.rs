@@ -151,7 +151,7 @@ mod test {
         }
 
         {
-            let mut f = io::BufReader::new(fs::File::open("tmp/test.gz").unwrap());
+            let f = io::BufReader::new(fs::File::open("tmp/test.gz").unwrap());
             let mut reader = ::read::BGzReader::new(f).unwrap();
 
             let mut data = [0; 10];
