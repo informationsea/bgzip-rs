@@ -24,6 +24,7 @@ use flate2;
 use std::cmp::min;
 use std::io;
 use std::io::prelude::*;
+use std::usize;
 
 use super::header::*;
 use super::*;
@@ -138,29 +139,31 @@ impl<R: io::Read + io::Seek> BGzReader<R> {
             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "end of bgzip"));
         }
 
-        self.current_block = new_block;
         self.current_pos = new_pos;
+        let current_block = &self.headers[new_block];
 
-        let current_block = &self.headers[self.current_block];
+        if self.current_block != new_block {
+            self.current_block = new_block;
 
-        //println!("seeking");
-        let _pos = self
-            .reader
-            .seek(io::SeekFrom::Start(current_block.block_start))?;
-        //println!("seeked {} {}", _pos, current_block.block_start);
+            //println!("seeking");
+            let _pos = self
+                .reader
+                .seek(io::SeekFrom::Start(current_block.block_start))?;
+            //println!("seeked {} {}", _pos, current_block.block_start);
 
-        let compressed_size = current_block.header.compressed_size().unwrap() as usize;
-        let mut compressed_data = Vec::with_capacity(compressed_size);
-        for _ in 0..compressed_size {
-            compressed_data.push(0u8);
+            let compressed_size = current_block.header.compressed_size().unwrap() as usize;
+            let mut compressed_data = Vec::with_capacity(compressed_size);
+            for _ in 0..compressed_size {
+                compressed_data.push(0u8);
+            }
+            self.reader.read_exact(&mut compressed_data)?;
+
+            //println!("decompressing");
+            self.current_data.clear();
+
+            let mut deflater = flate2::read::DeflateDecoder::new(&compressed_data[..]);
+            deflater.read_to_end(&mut self.current_data)?;
         }
-        self.reader.read_exact(&mut compressed_data)?;
-
-        //println!("decompressing");
-        self.current_data.clear();
-
-        let mut deflater = flate2::read::DeflateDecoder::new(&compressed_data[..]);
-        deflater.read_to_end(&mut self.current_data)?;
 
         self.pos_in_block = new_pos - current_block.uncompressed_start;
 
@@ -196,7 +199,7 @@ impl<R: io::Read + io::Seek> BGzReader<R> {
             headers,
             reader,
             current_pos: 0,
-            current_block: 0,
+            current_block: usize::MAX,
             current_data: Vec::new(),
             pos_in_block: 0,
         };
