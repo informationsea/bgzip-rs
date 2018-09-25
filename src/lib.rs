@@ -42,6 +42,7 @@
 extern crate flate2;
 
 pub mod header;
+pub mod index;
 pub mod read;
 pub mod write;
 
@@ -132,6 +133,21 @@ pub(crate) fn read_le_u32<R: io::Read>(mut reader: R) -> io::Result<u32> {
     Ok(value)
 }
 
+pub(crate) fn read_le_u64<R: io::Read>(mut reader: R) -> io::Result<u64> {
+    let mut buf = [0u8; 8];
+    reader.read_exact(&mut buf[..])?;
+    let value: u64 = (buf[0] as u64
+        | ((buf[1] as u64) << 8)
+        | ((buf[2] as u64) << 8 * 2)
+        | ((buf[3] as u64) << 8 * 3)
+        | ((buf[4] as u64) << 8 * 4)
+        | ((buf[5] as u64) << 8 * 5)
+        | ((buf[6] as u64) << 8 * 6)
+        | ((buf[7] as u64) << 8 * 7))
+        .into();
+    Ok(value)
+}
+
 pub(crate) fn bytes_le_u32(data: u32) -> [u8; 4] {
     [
         (data & 0xff) as u8,
@@ -139,6 +155,14 @@ pub(crate) fn bytes_le_u32(data: u32) -> [u8; 4] {
         ((data >> 16) & 0xff) as u8,
         ((data >> 24) & 0xff) as u8,
     ]
+}
+
+pub(crate) fn sized_vec<T: Copy>(data: T, size: usize) -> Vec<T> {
+    let mut v = Vec::new();
+    for _ in 0..size {
+        v.push(data);
+    }
+    v
 }
 
 #[cfg(test)]

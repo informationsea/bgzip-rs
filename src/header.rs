@@ -117,7 +117,7 @@ impl BGzHeader {
         self.xlen as u64
             + self.filename.as_ref().map_or(0, |x| x.len()) as u64
             + self.comment.as_ref().map_or(0, |x| x.len()) as u64
-            + 11
+            + 12
     }
 
     pub fn compressed_size(&self) -> Option<u64> {
@@ -125,7 +125,7 @@ impl BGzHeader {
             for one in extra {
                 if one.si1 == 66 && one.si2 == 67 {
                     let size = one.data[0] as u64 | (one.data[1] as u64) << 8;
-                    return Some(size - self.header_size() - 8);
+                    return Some(size - self.header_size() - 8 + 1);
                 }
             }
         }

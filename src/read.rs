@@ -22,6 +22,7 @@
 
 use flate2;
 use std::cmp::min;
+use std::collections::BTreeMap;
 use std::io;
 use std::io::prelude::*;
 use std::ops::Range;
@@ -38,6 +39,7 @@ pub struct BGzReader<R: io::Read + io::Seek> {
     current_block: usize,
     current_data: Vec<u8>,
     pos_in_block: u64,
+    compressed_pos_to_block: BTreeMap<u64, usize>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -59,6 +61,33 @@ impl super::Region for BGzBlock {
     }
 }
 
+impl<R: io::Read + io::Seek> io::BufRead for BGzReader<R> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        let copyable = self.current_data.len() - self.pos_in_block as usize;
+
+        if copyable == 0 {
+            let current_block = self.current_block;
+            let current_pos = self.current_pos;
+            //println!("seeking {} {}", current_block + 1, current_pos);
+            let result = self.seek_helper(current_block + 1, current_pos);
+            if let Err(e) = result {
+                if e.kind() == io::ErrorKind::UnexpectedEof {
+                    return Ok(&[0u8; 0][..]);
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+
+        Ok(&self.current_data[(self.pos_in_block as usize)..])
+    }
+
+    fn consume(&mut self, amt: usize) {
+        self.pos_in_block += amt as u64;
+        self.current_pos += amt as u64;
+    }
+}
+
 impl<R: io::Read + io::Seek> Read for BGzReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut read_len = 0usize;
@@ -69,15 +98,6 @@ impl<R: io::Read + io::Seek> Read for BGzReader<R> {
                 buf.len() - buf_pos,
                 self.current_data.len() - self.pos_in_block as usize,
             );
-            //println!(
-            //    "{} {} {} {} {} {}",
-            //    buf_pos,
-            //    buf.len(),
-            //    self.pos_in_block,
-            //    self.current_data.len(),
-            //    self.current_pos,
-            //    copyable
-            //);
 
             if copyable == 0 {
                 let current_block = self.current_block;
@@ -86,11 +106,7 @@ impl<R: io::Read + io::Seek> Read for BGzReader<R> {
                 let result = self.seek_helper(current_block + 1, current_pos);
                 if let Err(e) = result {
                     if e.kind() == io::ErrorKind::UnexpectedEof {
-                        //if read_len == 0 {
-                        //    return Err(e);
-                        //} else {
                         return Ok(read_len);
-                    //}
                     } else {
                         return Err(e);
                     }
@@ -172,9 +188,37 @@ impl<R: io::Read + io::Seek> BGzReader<R> {
         Ok(())
     }
 
+    pub fn seek_block(&mut self, block_start: u64, pos_in_block: u64) -> io::Result<()> {
+        let target_block_index = *(self.compressed_pos_to_block.get(&block_start).ok_or(
+            io::Error::new(io::ErrorKind::Other, "Invalid block start position"),
+        )?);
+        let pos = self.headers[target_block_index].uncompressed_range.start + pos_in_block;
+        self.seek_helper(target_block_index, pos)
+    }
+
+    pub fn seek_virtual_file_offset(&mut self, virtual_offset: u64) -> io::Result<()> {
+        let block_start = virtual_offset >> 16;
+        let block_pos = virtual_offset & 0xffff;
+        self.seek_block(block_start, block_pos)
+    }
+
+    pub fn tell_block(&self) -> (u64, u64) {
+        (
+            self.headers[self.current_block].block_start
+                - self.headers[self.current_block].header.header_size(),
+            self.pos_in_block,
+        )
+    }
+
+    pub fn tell_virtual_file_offset(&self) -> u64 {
+        let (block_start, pos_in_block) = self.tell_block();
+        block_start << 16 | (pos_in_block & 0xffff)
+    }
+
     pub fn new(mut reader: R) -> io::Result<BGzReader<R>> {
         let mut headers = Vec::new();
         let mut uncompressed_pos = 0;
+        let mut compressed_pos_to_block = BTreeMap::new();
         loop {
             let new_header = BGzHeader::read(&mut reader)?;
             if !new_header.is_bgzip() {
@@ -188,6 +232,11 @@ impl<R: io::Read + io::Seek> BGzReader<R> {
             let pos = reader.seek(io::SeekFrom::Current(compressed_size + 4))?;
             let uncompressed_size = read_le_u32(&mut reader)?;
 
+            // TODO: fix here. should be gzip block start
+            compressed_pos_to_block.insert(
+                pos - (compressed_size + 4 + new_header.header_size() as i64) as u64,
+                headers.len(),
+            );
             headers.push(BGzBlock {
                 uncompressed_range: uncompressed_pos..(uncompressed_size as u64 + uncompressed_pos),
                 block_start: pos - (compressed_size + 4) as u64,
@@ -203,6 +252,7 @@ impl<R: io::Read + io::Seek> BGzReader<R> {
             current_block: usize::MAX,
             current_data: Vec::new(),
             pos_in_block: 0,
+            compressed_pos_to_block,
         };
 
         //reader.seek(io::SeekFrom::Start(0))?;
@@ -217,6 +267,35 @@ mod tests {
     use std::fs;
     use std::io;
     use std::io::prelude::*;
+
+    #[test]
+    fn read_bgzip3() {
+        let f = io::BufReader::new(
+            fs::File::open("testfiles/common_all_20180418_half.vcf.gz").unwrap(),
+        );
+        let mut reader = super::BGzReader::new(f).unwrap();
+
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        assert_eq!(line, "##fileformat=VCFv4.0\n");
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        assert_eq!(line, "##fileDate=20180418\n");
+
+        reader.seek(io::SeekFrom::Start(65270)).unwrap();
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        assert_eq!(
+            line,
+            "1549439,0.53140927624872579,0.00014334862385321,0.00007167431192660\n"
+        );
+
+        reader.seek_virtual_file_offset(928252229).unwrap();
+        assert_eq!(928252229, reader.tell_virtual_file_offset());
+        line.clear();
+        reader.read_line(&mut line).unwrap();
+        assert_eq!(line, "1\t8951233\trs57849116\tAG\tA\t.\t.\tRS=57849116;RSPOS=8951234;dbSNPBuildID=129;SSR=0;SAO=0;VP=0x05000008000517003e000200;GENEINFO=CA6:765;WGT=1;VC=DIV;INT;ASP;VLD;G5A;G5;KGPhase1;KGPhase3;CAF=0.5054,0.4946;COMMON=1;TOPMED=0.63554408766564729,0.36445591233435270\n");
+    }
 
     #[test]
     fn read_bgzip2() {

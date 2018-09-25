@@ -17,3 +17,6 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 flate2 = "1"
+
+[dev-dependencies]
+clap = "2"

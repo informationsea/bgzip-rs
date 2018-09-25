@@ -23,6 +23,13 @@ fn main() {
                 .help("decompress at virtual file pointer (0-based uncompressed offset)"),
         )
         .arg(
+            Arg::with_name("virtual offset")
+                .short("v")
+                .long("virtual")
+                .takes_value(true)
+                .help("Virtual offset (see htslib documents)"),
+        )
+        .arg(
             Arg::with_name("stdout")
                 .short("c")
                 .long("stdout")
@@ -110,9 +117,12 @@ fn decompression_mode(matches: ArgMatches) -> io::Result<()> {
             "input file is required for decompression mode",
         ),
     )?)?)?;
+
     let mut output = get_output(&matches)?;
 
-    if let Some(offset) = matches.value_of("offset") {
+    if let Some(voffset) = matches.value_of("virtual offset") {
+        input.seek_virtual_file_offset(voffset.parse::<u64>().unwrap())?;
+    } else if let Some(offset) = matches.value_of("offset") {
         input.seek(io::SeekFrom::Start(offset.parse::<u64>().unwrap()))?;
     }
 
