@@ -1,3 +1,4 @@
+use super::{Index, IndexedFile};
 use flate2::read::MultiGzDecoder;
 use read::BGzReader;
 use std::cmp::max;
@@ -21,7 +22,7 @@ pub struct TabixFile<R: io::Read + io::Seek> {
     pub tabix: TabixIndex,
 
     max_column_pos: usize,
-    target_rid: usize,
+    target_rid: u32,
     target_begin: u64,
     target_end: u64,
     chunks: Vec<(u64, u64)>,
@@ -29,77 +30,20 @@ pub struct TabixFile<R: io::Read + io::Seek> {
     first_scan: bool,
 }
 
-impl<R: io::Read + io::Seek> TabixFile<R> {
-    pub fn new<U: io::Read>(reader: R, index_reader: U) -> io::Result<TabixFile<R>> {
-        let mut bgz_reader = BGzReader::new(reader)?;
-        let index = TabixIndex::new(index_reader)?;
-
-        bgz_reader.seek_virtual_file_offset(index.seq_index[0].interval[0])?;
-
-        Ok(TabixFile {
-            reader: bgz_reader,
-            max_column_pos: max(index.col_beg, max(index.col_end, index.col_seq)) as usize,
-            tabix: index,
-            target_rid: 0,
-            target_begin: 0,
-            target_end: 0,
-            chunks: Vec::new(),
-            current_chunk: 0,
-            first_scan: true,
-        })
-    }
-
-    // 1-based close-close
-    pub fn fetch(&mut self, rid: usize, begin: u64, end: u64) -> io::Result<()> {
-        self.fetch0(rid, begin - 1, end)
-    }
-
+impl<R: io::Read + io::Seek> IndexedFile for TabixFile<R> {
     // 0-based half-close, half-open
-    pub fn fetch0(&mut self, rid: usize, begin: u64, end: u64) -> io::Result<()> {
+    fn fetch0(&mut self, rid: u32, begin: u64, end: u64) -> io::Result<()> {
         self.target_rid = rid;
         self.target_begin = begin;
         self.target_end = end;
 
-        let mut bins = Vec::new();
-        super::reg2bins(
-            begin,
-            end,
-            super::DEFAULT_MIN_SHIFT,
-            super::DEFAULT_DEPTH,
-            &mut bins,
-        );
-
-        let mut simplfy = super::RegionSimplify::new();
-        for one_bin in bins {
-            if let Some(bin_chunks) = self.tabix.seq_index[rid].bins.get(&one_bin.into()) {
-                for one_chunk in &bin_chunks.chunks {
-                    simplfy.insert(one_chunk.chunk_beg, one_chunk.chunk_end);
-                }
-            }
-        }
-
-        self.chunks = simplfy.regions().clone();
-
+        self.chunks = self.tabix.region_chunks(rid, begin, end);
         self.current_chunk = 0;
         self.first_scan = true;
         Ok(())
     }
 
-    pub fn read_all(&mut self) -> io::Result<Vec<(u64, u64, Vec<u8>)>> {
-        let mut data = Vec::new();
-        loop {
-            let mut one = Vec::new();
-            let result = self.read(&mut one)?;
-            if let Some((start, end)) = result {
-                data.push((start, end, one));
-            } else {
-                break;
-            }
-        }
-        Ok(data)
-    }
-
-    pub fn read(&mut self, mut data: &mut Vec<u8>) -> io::Result<Option<(u64, u64)>> {
+    fn read(&mut self, mut data: &mut Vec<u8>) -> io::Result<Option<(u64, u64)>> {
         println!("one read");
 
         while self.current_chunk < self.chunks.len() {
@@ -184,6 +128,27 @@ impl<R: io::Read + io::Seek> TabixFile<R> {
     }
 }
 
+impl<R: io::Read + io::Seek> TabixFile<R> {
+    pub fn new<U: io::Read>(reader: R, index_reader: U) -> io::Result<TabixFile<R>> {
+        let mut bgz_reader = BGzReader::new(reader)?;
+        let index = TabixIndex::new(index_reader)?;
+
+        bgz_reader.seek_virtual_file_offset(index.seq_index[0].interval[0])?;
+
+        Ok(TabixFile {
+            reader: bgz_reader,
+            max_column_pos: max(index.col_beg, max(index.col_end, index.col_seq)) as usize,
+            tabix: index,
+            target_rid: 0,
+            target_begin: 0,
+            target_end: 0,
+            chunks: Vec::new(),
+            current_chunk: 0,
+            first_scan: true,
+        })
+    }
+}
+
 impl TabixFile<io::BufReader<fs::File>> {
     pub fn with_filename(filename: &str) -> io::Result<TabixFile<io::BufReader<fs::File>>> {
         let tabix_name = format!("{}.tbi", filename);
@@ -204,12 +169,47 @@ pub struct TabixIndex {
     pub skip: u32,
     pub l_nm: u32,
     pub names: Vec<Vec<u8>>,
-    pub name_to_index: BTreeMap<Vec<u8>, usize>,
+    pub name_to_index: BTreeMap<Vec<u8>, u32>,
     pub seq_index: Vec<SequenceIndex>,
 
     zero_based: bool,
     sam_mode: bool,
     vcf_mode: bool,
+}
+
+impl super::Index for TabixIndex {
+    fn region_chunks(&self, rid: u32, begin: u64, end: u64) -> Vec<(u64, u64)> {
+        let mut bins = Vec::new();
+        super::reg2bins(
+            begin,
+            end,
+            super::DEFAULT_MIN_SHIFT,
+            super::DEFAULT_DEPTH,
+            &mut bins,
+        );
+
+        let mut simplfy = super::RegionSimplify::new();
+        for one_bin in bins {
+            if let Some(bin_chunks) = self.seq_index[rid as usize].bins.get(&one_bin.into()) {
+                for one_chunk in &bin_chunks.chunks {
+                    simplfy.insert(one_chunk.chunk_beg, one_chunk.chunk_end);
+                }
+            }
+        }
+        simplfy.regions()
+    }
+
+    fn rid2name(&self, rid: u32) -> &[u8] {
+        &self.names[rid as usize]
+    }
+
+    fn name2rid(&self, name: &[u8]) -> u32 {
+        self.name_to_index[name]
+    }
+
+    fn names(&self) -> &[Vec<u8>] {
+        &self.names
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -272,7 +272,7 @@ impl TabixIndex {
 
         let mut seq_index = Vec::new();
         for i in 0..n_ref {
-            name_to_index.insert(names[i as usize].clone(), i as usize);
+            name_to_index.insert(names[i as usize].clone(), i as u32);
             let n_bin = read_le_u32(&mut reader)?;
 
             let mut bin_index = BTreeMap::new();
@@ -349,6 +349,7 @@ fn convert_data_to_u64(data: &[u8]) -> io::Result<u64> {
 
 #[cfg(test)]
 mod test {
+    use index::IndexedFile;
     use std::fs;
     use std::io;
     use std::str;
@@ -375,8 +376,10 @@ mod test {
         ).split(|x| *x == b'\n')
         .map(|x| x.to_vec())
         .filter(|x| x.len() > 0)
-        .map(|mut x| {x.push(b'\n'); x})
-        .collect();
+        .map(|mut x| {
+            x.push(b'\n');
+            x
+        }).collect();
 
         for x in &actual_data {
             println!("data: {}", str::from_utf8(&x.2).unwrap());
