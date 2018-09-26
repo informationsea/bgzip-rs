@@ -1,11 +1,7 @@
 extern crate bgzip;
 extern crate clap;
 
-use clap::{App, AppSettings, Arg, ArgMatches};
-use std::boxed::Box;
-use std::cmp::min;
-use std::fs;
-use std::io;
+use clap::{App, AppSettings, Arg};
 use std::io::prelude::*;
 use std::str;
 
