@@ -44,26 +44,28 @@ impl<R: io::Read + io::Seek> IndexedFile for TabixFile<R> {
     }
 
     fn read(&mut self, mut data: &mut Vec<u8>) -> io::Result<Option<(u64, u64)>> {
-        println!("one read");
+        //println!("one read");
 
         while self.current_chunk < self.chunks.len() {
             let chunk = &self.chunks[self.current_chunk];
-            println!(
-                "current_chunk:{}  {}-{}",
-                self.current_chunk, chunk.0, chunk.1
-            );
+            //println!(
+            //    "current_chunk:{}  {}-{}",
+            //    self.current_chunk,
+            //    chunk.0,
+            //    chunk.1
+            //);
             if self.first_scan {
                 self.reader.seek_virtual_file_offset(chunk.0)?;
                 self.first_scan = false;
-                println!("first scan");
+            //println!("first scan");
             } else {
-                println!("Continue scan {}", self.reader.tell_virtual_file_offset());
+                //println!("Continue scan {}", self.reader.tell_virtual_file_offset());
             }
 
             loop {
                 let current_virtual_offset = self.reader.tell_virtual_file_offset();
                 if current_virtual_offset >= chunk.1 {
-                    println!("end of chunk {}", current_virtual_offset);
+                    //println!("end of chunk {}", current_virtual_offset);
                     break;
                 }
 
@@ -102,16 +104,17 @@ impl<R: io::Read + io::Seek> IndexedFile for TabixFile<R> {
                             current_virtual_offset, start_pos, end_pos
                         );
                         */
-
+                /*
                 let this_bin = super::reg2bin(
                     start_pos,
                     end_pos,
                     super::DEFAULT_MIN_SHIFT,
                     super::DEFAULT_DEPTH,
                 );
+                */
 
                 if start_pos <= self.target_end && self.target_begin <= end_pos {
-                    println!("[{}] data {}", this_bin, str::from_utf8(data).unwrap());
+                    //println!("[{}] data {}", this_bin, str::from_utf8(data).unwrap());
                     return Ok(Some((start_pos, end_pos)));
                 }
             }
@@ -119,7 +122,7 @@ impl<R: io::Read + io::Seek> IndexedFile for TabixFile<R> {
             self.first_scan = true;
             self.current_chunk += 1;
             if self.chunks.len() <= self.current_chunk {
-                println!("no more chunk");
+                //println!("no more chunk");
                 break;
             }
         }

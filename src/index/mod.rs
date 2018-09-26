@@ -1,5 +1,3 @@
-pub mod bai;
-pub mod csi;
 pub mod tbi;
 
 use std::cmp::{max, min};
