@@ -37,9 +37,10 @@ impl<R: io::Read + io::Seek> IndexedFile for TabixFile<R> {
         self.target_begin = begin;
         self.target_end = end;
 
-        println!("fetch0 {} {} {}", rid, begin, end);
+        //println!("fetch0 {} {} {}", rid, begin, end);
 
         self.chunks = self.tabix.region_chunks(rid, begin, end);
+        //println!("chunks {:?}", self.chunks);
         self.current_chunk = 0;
         self.first_scan = true;
         Ok(())
@@ -116,8 +117,12 @@ impl<R: io::Read + io::Seek> IndexedFile for TabixFile<R> {
                 */
 
                 if start_pos < self.target_end && self.target_begin < end_pos {
-                    //println!("[{}] data {}", this_bin, str::from_utf8(data).unwrap());
+                    //println!("data {}", start_pos);
                     return Ok(Some((start_pos, end_pos)));
+                }
+
+                if self.target_end < start_pos {
+                    break;
                 }
             }
 
@@ -196,7 +201,9 @@ impl super::Index for TabixIndex {
         let mut simplfy = super::RegionSimplify::new();
         for one_bin in bins {
             if let Some(bin_chunks) = self.seq_index[rid as usize].bins.get(&one_bin.into()) {
+                //println!("bin {} {:?}", one_bin, bin_chunks);
                 for one_chunk in &bin_chunks.chunks {
+                    //println!("regions {} {}", one_chunk.chunk_beg, one_chunk.chunk_end);
                     simplfy.insert(one_chunk.chunk_beg, one_chunk.chunk_end);
                 }
             }
@@ -469,20 +476,20 @@ mod test {
             let rid = indexed_file.tabix.name2rid(&seqname);
             let mut pos_list: Vec<_> = pos_list.into_iter().collect();
             pos_list.sort();
-            let pos_list: Vec<_> = pos_list.into_iter().take(30).collect();
-            println!("{} {}", str::from_utf8(&seqname).unwrap(), pos_list.len());
+            let pos_list: Vec<_> = pos_list.into_iter().take(70).collect();
+            //println!("{} {}", str::from_utf8(&seqname).unwrap(), pos_list.len());
             for (i, start) in pos_list.iter().enumerate() {
-                println!("start: {}", start);
+                //println!("start: {}", start);
                 for (_, end) in pos_list.iter().enumerate().skip(i) {
-                    println!("end: {}", end);
+                    //println!("end: {}", end);
                     let expected: Vec<_> = gff_lines
                         .iter()
                         .filter(|x| x.0 == seqname && *start <= x.2 && x.1 <= *end)
                         .map(|x| (x.1, x.2, x.3.clone()))
                         .collect();
-                    println!("fetch");
+                    //println!("fetch");
                     indexed_file.fetch(rid, *start, *end).unwrap();
-                    println!("read all");
+                    //println!("read all");
                     let actual: Vec<_> = indexed_file
                         .read_all()
                         .unwrap()

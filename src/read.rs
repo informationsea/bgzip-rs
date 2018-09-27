@@ -31,13 +31,16 @@ use std::usize;
 use super::header::*;
 use super::*;
 
+const CACHE_NUM: usize = 100;
+
 #[derive(Debug)]
 pub struct BGzReader<R: io::Read + io::Seek> {
     headers: Vec<BGzBlock>,
     reader: R,
     current_pos: u64,
     current_block: usize,
-    current_data: Vec<u8>,
+    cache_queue: Vec<usize>,
+    current_data: BTreeMap<usize, Vec<u8>>,
     pos_in_block: u64,
     compressed_pos_to_block: BTreeMap<u64, usize>,
 }
@@ -63,7 +66,7 @@ impl super::Region for BGzBlock {
 
 impl<R: io::Read + io::Seek> io::BufRead for BGzReader<R> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
-        let copyable = self.current_data.len() - self.pos_in_block as usize;
+        let copyable = self.current_data[&self.current_block].len() - self.pos_in_block as usize;
 
         if copyable == 0 {
             let current_block = self.current_block;
@@ -79,7 +82,7 @@ impl<R: io::Read + io::Seek> io::BufRead for BGzReader<R> {
             }
         }
 
-        Ok(&self.current_data[(self.pos_in_block as usize)..])
+        Ok(&self.current_data[&self.current_block][(self.pos_in_block as usize)..])
     }
 
     fn consume(&mut self, amt: usize) {
@@ -96,7 +99,7 @@ impl<R: io::Read + io::Seek> Read for BGzReader<R> {
         while buf_pos < buf.len() {
             let copyable = min(
                 buf.len() - buf_pos,
-                self.current_data.len() - self.pos_in_block as usize,
+                self.current_data[&self.current_block].len() - self.pos_in_block as usize,
             );
 
             if copyable == 0 {
@@ -113,7 +116,8 @@ impl<R: io::Read + io::Seek> Read for BGzReader<R> {
                 }
             } else {
                 for i in 0..copyable {
-                    buf[buf_pos + i] = self.current_data[i + (self.pos_in_block as usize)];
+                    buf[buf_pos + i] =
+                        self.current_data[&self.current_block][i + (self.pos_in_block as usize)];
                 }
                 read_len += copyable;
                 buf_pos += copyable;
@@ -159,10 +163,14 @@ impl<R: io::Read + io::Seek> BGzReader<R> {
 
         self.current_pos = new_pos;
         let current_block = &self.headers[new_block];
+        self.current_block = new_block;
 
-        if self.current_block != new_block {
-            self.current_block = new_block;
-
+        if !self.current_data.contains_key(&self.current_block) {
+            if self.current_data.len() >= CACHE_NUM {
+                let to_remove = self.cache_queue.remove(0);
+                self.current_data.remove(&to_remove);
+            }
+            //println!("load block {}/{}", new_block, self.headers.len());
             //println!("seeking");
             let _pos = self
                 .reader
@@ -177,10 +185,16 @@ impl<R: io::Read + io::Seek> BGzReader<R> {
             self.reader.read_exact(&mut compressed_data)?;
 
             //println!("decompressing");
-            self.current_data.clear();
+            //self.current_data.clear();
 
+            let mut data = Vec::new();
             let mut deflater = flate2::read::DeflateDecoder::new(&compressed_data[..]);
-            deflater.read_to_end(&mut self.current_data)?;
+            deflater.read_to_end(&mut data)?;
+            self.current_data.insert(self.current_block, data);
+
+            self.cache_queue.push(new_block);
+        } else {
+            //self.cache_queue.remove_item(new_block);
         }
 
         self.pos_in_block = new_pos - current_block.uncompressed_range.start;
@@ -189,9 +203,14 @@ impl<R: io::Read + io::Seek> BGzReader<R> {
     }
 
     pub fn seek_block(&mut self, block_start: u64, pos_in_block: u64) -> io::Result<()> {
-        let target_block_index = *(self.compressed_pos_to_block.get(&block_start).ok_or(
-            io::Error::new(io::ErrorKind::Other, "Invalid block start position"),
-        )?);
+        let target_block_index =
+            *(self
+                .compressed_pos_to_block
+                .get(&block_start)
+                .ok_or(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Invalid block start position",
+                ))?);
         let pos = self.headers[target_block_index].uncompressed_range.start + pos_in_block;
         self.seek_helper(target_block_index, pos)
     }
@@ -250,9 +269,10 @@ impl<R: io::Read + io::Seek> BGzReader<R> {
             reader,
             current_pos: 0,
             current_block: usize::MAX,
-            current_data: Vec::new(),
+            current_data: BTreeMap::new(),
             pos_in_block: 0,
             compressed_pos_to_block,
+            cache_queue: Vec::new(),
         };
 
         //reader.seek(io::SeekFrom::Start(0))?;
