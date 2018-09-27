@@ -37,6 +37,8 @@ impl<R: io::Read + io::Seek> IndexedFile for TabixFile<R> {
         self.target_begin = begin;
         self.target_end = end;
 
+        println!("fetch0 {} {} {}", rid, begin, end);
+
         self.chunks = self.tabix.region_chunks(rid, begin, end);
         self.current_chunk = 0;
         self.first_scan = true;
@@ -84,7 +86,7 @@ impl<R: io::Read + io::Seek> IndexedFile for TabixFile<R> {
                 // let seq_text = &elements[self.tabix.col_seq as usize - 1]; // do not check seq id
                 let start_text = &elements[self.tabix.col_beg as usize - 1];
                 let start_pos =
-                    convert_data_to_u64(start_text)? - if self.tabix.zero_based { 1 } else { 0 };
+                    convert_data_to_u64(start_text)? - if self.tabix.zero_based { 0 } else { 1 };
 
                 let end_text = &elements[self.tabix.col_end as usize - 1];
                 let end_pos = if self.tabix.vcf_mode {
@@ -113,7 +115,7 @@ impl<R: io::Read + io::Seek> IndexedFile for TabixFile<R> {
                 );
                 */
 
-                if start_pos <= self.target_end && self.target_begin <= end_pos {
+                if start_pos < self.target_end && self.target_begin < end_pos {
                     //println!("[{}] data {}", this_bin, str::from_utf8(data).unwrap());
                     return Ok(Some((start_pos, end_pos)));
                 }
@@ -352,9 +354,11 @@ fn convert_data_to_u64(data: &[u8]) -> io::Result<u64> {
 
 #[cfg(test)]
 mod test {
-    use index::IndexedFile;
+    use flate2::read::MultiGzDecoder;
+    use index::{Index, IndexedFile};
+    use std::collections::{HashMap, HashSet};
     use std::fs;
-    use std::io;
+    use std::io::{self, BufRead};
     use std::str;
 
     #[test]
@@ -384,9 +388,11 @@ mod test {
             x
         }).collect();
 
+        /*
         for x in &actual_data {
             println!("data: {}", str::from_utf8(&x.2).unwrap());
         }
+        */
 
         assert_eq!(actual_data.len(), expected_data.len());
 
@@ -401,6 +407,97 @@ mod test {
                 str::from_utf8(&y).unwrap()
             );
             i += 1;
+        }
+    }
+    #[test]
+    fn test_fetch2() {
+        let mut gff_file = io::BufReader::new(MultiGzDecoder::new(io::BufReader::new(
+            fs::File::open("./testfiles/gencode.v28.annotation.sorted.subset.gff3.gz").unwrap(),
+        )));
+        let mut indexed_file = super::TabixFile::with_filename(
+            "./testfiles/gencode.v28.annotation.sorted.subset.gff3.gz",
+        ).unwrap();
+        let mut gff_lines = Vec::new();
+        let mut names = HashMap::new();
+
+        loop {
+            let mut line = Vec::new();
+            gff_file.read_until(b'\n', &mut line).unwrap();
+            if line.len() == 0 {
+                break;
+            }
+            if line[0] == b'#' {
+                continue;
+            }
+
+            let elements: Vec<_> = line
+                .split(|x| *x == b'\t')
+                .take(5)
+                .map(|x| x.to_vec())
+                .collect();
+            //println!("{}", str::from_utf8(&line).unwrap());
+            let seqname = elements[0].to_vec();
+            let start = str::from_utf8(&elements[3])
+                .unwrap()
+                .parse::<u64>()
+                .unwrap();
+            let stop = str::from_utf8(&elements[4])
+                .unwrap()
+                .parse::<u64>()
+                .unwrap();
+
+            if !names.contains_key(&seqname) {
+                names.insert(seqname.clone(), HashSet::new());
+            }
+            let pos_list = names.get_mut(&seqname).unwrap();
+            pos_list.insert(start - 1);
+            pos_list.insert(start);
+            pos_list.insert(start + 1);
+            pos_list.insert(stop - 1);
+            pos_list.insert(stop);
+            pos_list.insert(stop + 1);
+
+            gff_lines.push((
+                seqname,
+                start,
+                stop,
+                str::from_utf8(&line).unwrap().to_string(),
+            ));
+        }
+
+        for (seqname, mut pos_list) in names {
+            let rid = indexed_file.tabix.name2rid(&seqname);
+            let mut pos_list: Vec<_> = pos_list.into_iter().collect();
+            pos_list.sort();
+            let pos_list: Vec<_> = pos_list.into_iter().take(30).collect();
+            println!("{} {}", str::from_utf8(&seqname).unwrap(), pos_list.len());
+            for (i, start) in pos_list.iter().enumerate() {
+                println!("start: {}", start);
+                for (_, end) in pos_list.iter().enumerate().skip(i) {
+                    println!("end: {}", end);
+                    let expected: Vec<_> = gff_lines
+                        .iter()
+                        .filter(|x| x.0 == seqname && *start <= x.2 && x.1 <= *end)
+                        .map(|x| (x.1, x.2, x.3.clone()))
+                        .collect();
+                    println!("fetch");
+                    indexed_file.fetch(rid, *start, *end).unwrap();
+                    println!("read all");
+                    let actual: Vec<_> = indexed_file
+                        .read_all()
+                        .unwrap()
+                        .into_iter()
+                        .map(|x| (x.0 + 1, x.1, str::from_utf8(&x.2).unwrap().to_string()))
+                        .collect();
+                    assert_eq!(
+                        expected,
+                        actual,
+                        "len: {} / {}",
+                        expected.len(),
+                        actual.len()
+                    );
+                }
+            }
         }
     }
 }
