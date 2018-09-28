@@ -417,6 +417,10 @@ mod test {
         .map(|x| x.to_vec())
         .filter(|x| x.len() > 0)
         .map(|mut x| {
+            if x[x.len() - 1] == b'\r' {
+                let to_remove = x.len() - 1;
+                x.remove(to_remove);
+            }
             x.push(b'\n');
             x
         }).collect();
