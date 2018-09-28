@@ -224,6 +224,8 @@ impl super::Index for TabixIndex {
     }
 }
 
+const LINER_INTERVAL: u64 = 16 * 1000;
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SequenceIndex {
     pub n_bin: u32,
@@ -349,6 +351,30 @@ impl TabixIndex {
             vcf_mode,
             sam_mode,
         })
+    }
+
+    pub fn start_chunks(
+        &self,
+        rid: u32,
+        start_begin: u64,
+        start_end: u64,
+    ) -> io::Result<(u64, u64)> {
+        let seq_index = self
+            .seq_index
+            .get(rid as usize)
+            .ok_or(io::Error::new(io::ErrorKind::Other, "rid is not found"))?;
+        let begin_index = (start_begin / LINER_INTERVAL) as usize;
+        let mut end_index = (start_end / LINER_INTERVAL) as usize;
+        if begin_index >= seq_index.interval.len() {
+            return Err(io::Error::new(io::ErrorKind::Other, "out of index"));
+        }
+        if end_index >= seq_index.interval.len() {
+            end_index = seq_index.interval.len() - 1;
+        }
+        Ok((
+            seq_index.interval[begin_index],
+            seq_index.interval[end_index],
+        ))
     }
 }
 
