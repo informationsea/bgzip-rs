@@ -1,4 +1,4 @@
-use super::{Index, IndexedFile};
+use super::{Index, IndexedFile, LinerIndex, LinerIndexedFile};
 use flate2::read::MultiGzDecoder;
 use read::BGzReader;
 use std::cmp::max;
@@ -28,6 +28,20 @@ pub struct TabixFile<R: io::Read + io::Seek> {
     chunks: Vec<(u64, u64)>,
     current_chunk: usize,
     first_scan: bool,
+    scan_by_start_position_mode: bool,
+}
+
+impl<R: io::Read + io::Seek> LinerIndexedFile for TabixFile<R> {
+    fn fetch_start0(&mut self, rid: u32, start_begin: u64, start_end: u64) -> io::Result<()> {
+        self.target_rid = rid;
+        self.target_begin = start_begin;
+        self.target_end = start_end;
+        self.chunks = vec![self.tabix.start_chunks(rid, start_begin, start_end)?];
+        self.current_chunk = 0;
+        self.first_scan = true;
+        self.scan_by_start_position_mode = true;
+        Ok(())
+    }
 }
 
 impl<R: io::Read + io::Seek> IndexedFile for TabixFile<R> {
@@ -43,6 +57,7 @@ impl<R: io::Read + io::Seek> IndexedFile for TabixFile<R> {
         //println!("chunks {:?}", self.chunks);
         self.current_chunk = 0;
         self.first_scan = true;
+        self.scan_by_start_position_mode = false;
         Ok(())
     }
 
@@ -68,7 +83,7 @@ impl<R: io::Read + io::Seek> IndexedFile for TabixFile<R> {
             loop {
                 let current_virtual_offset = self.reader.tell_virtual_file_offset();
                 if current_virtual_offset >= chunk.1 {
-                    //println!("end of chunk {}", current_virtual_offset);
+                    println!("end of chunk {}", current_virtual_offset);
                     break;
                 }
 
@@ -116,13 +131,23 @@ impl<R: io::Read + io::Seek> IndexedFile for TabixFile<R> {
                 );
                 */
 
-                if start_pos < self.target_end && self.target_begin < end_pos {
-                    //println!("data {}", start_pos);
-                    return Ok(Some((start_pos, end_pos)));
-                }
+                if self.scan_by_start_position_mode {
+                    //println!("scan {}", start_pos);
+                    if self.target_begin <= start_pos && start_pos < self.target_end {
+                        return Ok(Some((start_pos, end_pos)));
+                    } else if self.target_end <= start_pos {
+                        //println!("break {}/{}", self.target_end, start_pos);
+                        break;
+                    }
+                } else {
+                    if start_pos < self.target_end && self.target_begin < end_pos {
+                        //println!("data {}", start_pos);
+                        return Ok(Some((start_pos, end_pos)));
+                    }
 
-                if self.target_end < start_pos {
-                    break;
+                    if self.target_end < start_pos {
+                        break;
+                    }
                 }
             }
 
@@ -155,6 +180,7 @@ impl<R: io::Read + io::Seek> TabixFile<R> {
             chunks: Vec::new(),
             current_chunk: 0,
             first_scan: true,
+            scan_by_start_position_mode: false,
         })
     }
 }
@@ -224,7 +250,38 @@ impl super::Index for TabixIndex {
     }
 }
 
-const LINER_INTERVAL: u64 = 16 * 1000;
+impl super::LinerIndex for TabixIndex {
+    fn start_chunks(&self, rid: u32, start_begin: u64, start_end: u64) -> io::Result<(u64, u64)> {
+        let seq_index = self
+            .seq_index
+            .get(rid as usize)
+            .ok_or(io::Error::new(io::ErrorKind::Other, "rid is not found"))?;
+        let begin_index = (start_begin / LINER_INTERVAL) as usize;
+        let mut end_index = ((start_end + 1) / LINER_INTERVAL) as usize + 1;
+        if begin_index >= seq_index.interval.len() {
+            return Err(io::Error::new(io::ErrorKind::Other, "out of index"));
+        }
+        if end_index >= seq_index.interval.len() {
+            end_index = seq_index.interval.len() - 1;
+        }
+        println!(
+            "start_chunks {} - {} / {} {} {} / {} {}",
+            seq_index.interval[begin_index],
+            seq_index.interval[end_index],
+            begin_index,
+            end_index,
+            seq_index.interval.len(),
+            start_begin,
+            start_end
+        );
+        Ok((
+            seq_index.interval[begin_index],
+            seq_index.interval[end_index],
+        ))
+    }
+}
+
+const LINER_INTERVAL: u64 = 16 * 1024;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SequenceIndex {
@@ -352,30 +409,6 @@ impl TabixIndex {
             sam_mode,
         })
     }
-
-    pub fn start_chunks(
-        &self,
-        rid: u32,
-        start_begin: u64,
-        start_end: u64,
-    ) -> io::Result<(u64, u64)> {
-        let seq_index = self
-            .seq_index
-            .get(rid as usize)
-            .ok_or(io::Error::new(io::ErrorKind::Other, "rid is not found"))?;
-        let begin_index = (start_begin / LINER_INTERVAL) as usize;
-        let mut end_index = (start_end / LINER_INTERVAL) as usize;
-        if begin_index >= seq_index.interval.len() {
-            return Err(io::Error::new(io::ErrorKind::Other, "out of index"));
-        }
-        if end_index >= seq_index.interval.len() {
-            end_index = seq_index.interval.len() - 1;
-        }
-        Ok((
-            seq_index.interval[begin_index],
-            seq_index.interval[end_index],
-        ))
-    }
 }
 
 fn convert_data_to_u64(data: &[u8]) -> io::Result<u64> {
@@ -388,7 +421,7 @@ fn convert_data_to_u64(data: &[u8]) -> io::Result<u64> {
 #[cfg(test)]
 mod test {
     use flate2::read::MultiGzDecoder;
-    use index::{Index, IndexedFile};
+    use index::{Index, IndexedFile, LinerIndexedFile};
     use std::collections::{HashMap, HashSet};
     use std::fs;
     use std::io::{self, BufRead};
@@ -448,12 +481,55 @@ mod test {
     }
     #[test]
     fn test_fetch2() {
-        let mut gff_file = io::BufReader::new(MultiGzDecoder::new(io::BufReader::new(
-            fs::File::open("./testfiles/gencode.v28.annotation.sorted.subset.gff3.gz").unwrap(),
-        )));
         let mut indexed_file = super::TabixFile::with_filename(
             "./testfiles/gencode.v28.annotation.sorted.subset.gff3.gz",
         ).unwrap();
+
+        let (gff_lines, names) = load_gff();
+
+        for (seqname, mut pos_list) in names {
+            let rid = indexed_file.tabix.name2rid(&seqname);
+            let mut pos_list: Vec<_> = pos_list.into_iter().collect();
+            pos_list.sort();
+            let pos_list: Vec<_> = pos_list.into_iter().take(70).collect();
+            //println!("{} {}", str::from_utf8(&seqname).unwrap(), pos_list.len());
+            for (i, start) in pos_list.iter().enumerate() {
+                //println!("start: {}", start);
+                for (_, end) in pos_list.iter().enumerate().skip(i) {
+                    //println!("end: {}", end);
+                    let expected: Vec<_> = gff_lines
+                        .iter()
+                        .filter(|x| x.0 == seqname && *start <= x.2 && x.1 <= *end)
+                        .map(|x| (x.1, x.2, x.3.clone()))
+                        .collect();
+                    //println!("fetch");
+                    indexed_file.fetch(rid, *start, *end).unwrap();
+                    //println!("read all");
+                    let actual: Vec<_> = indexed_file
+                        .read_all()
+                        .unwrap()
+                        .into_iter()
+                        .map(|x| (x.0 + 1, x.1, str::from_utf8(&x.2).unwrap().to_string()))
+                        .collect();
+                    assert_eq!(
+                        expected,
+                        actual,
+                        "len: {} / {}",
+                        expected.len(),
+                        actual.len()
+                    );
+                }
+            }
+        }
+    }
+
+    fn load_gff() -> (
+        Vec<(Vec<u8>, u64, u64, String)>,
+        HashMap<Vec<u8>, HashSet<u64>>,
+    ) {
+        let mut gff_file = io::BufReader::new(MultiGzDecoder::new(io::BufReader::new(
+            fs::File::open("./testfiles/gencode.v28.annotation.sorted.subset.gff3.gz").unwrap(),
+        )));
         let mut gff_lines = Vec::new();
         let mut names = HashMap::new();
 
@@ -502,6 +578,17 @@ mod test {
             ));
         }
 
+        (gff_lines, names)
+    }
+
+    #[test]
+    fn test_fetch_start() {
+        let mut indexed_file = super::TabixFile::with_filename(
+            "./testfiles/gencode.v28.annotation.sorted.subset.gff3.gz",
+        ).unwrap();
+
+        let (gff_lines, names) = load_gff();
+
         for (seqname, mut pos_list) in names {
             let rid = indexed_file.tabix.name2rid(&seqname);
             let mut pos_list: Vec<_> = pos_list.into_iter().collect();
@@ -514,11 +601,11 @@ mod test {
                     //println!("end: {}", end);
                     let expected: Vec<_> = gff_lines
                         .iter()
-                        .filter(|x| x.0 == seqname && *start <= x.2 && x.1 <= *end)
+                        .filter(|x| x.0 == seqname && *start <= x.1 && x.1 <= *end)
                         .map(|x| (x.1, x.2, x.3.clone()))
                         .collect();
                     //println!("fetch");
-                    indexed_file.fetch(rid, *start, *end).unwrap();
+                    indexed_file.fetch_start(rid, *start, *end).unwrap();
                     //println!("read all");
                     let actual: Vec<_> = indexed_file
                         .read_all()
@@ -529,9 +616,11 @@ mod test {
                     assert_eq!(
                         expected,
                         actual,
-                        "len: {} / {}",
+                        "pos {}-{} / len: {} / {}",
+                        start,
+                        end,
                         expected.len(),
-                        actual.len()
+                        actual.len(),
                     );
                 }
             }

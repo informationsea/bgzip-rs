@@ -31,11 +31,22 @@ pub trait IndexedFile {
     }
 }
 
+pub trait LinerIndexedFile: IndexedFile {
+    fn fetch_start0(&mut self, rid: u32, start_begin: u64, start_end: u64) -> io::Result<()>;
+    fn fetch_start(&mut self, rid: u32, start_begin: u64, start_end: u64) -> io::Result<()> {
+        self.fetch_start0(rid, start_begin - 1, start_end)
+    }
+}
+
 pub trait Index {
     fn region_chunks(&self, rid: u32, begin: u64, end: u64) -> Vec<(u64, u64)>;
     fn rid2name(&self, rid: u32) -> &[u8];
     fn name2rid(&self, name: &[u8]) -> u32;
     fn names(&self) -> &[Vec<u8>];
+}
+
+pub trait LinerIndex: Index {
+    fn start_chunks(&self, rid: u32, start_begin: u64, start_end: u64) -> io::Result<(u64, u64)>;
 }
 
 /* calculate bin given an alignment covering [beg,end) (zero-based, half-close-half-open) */
