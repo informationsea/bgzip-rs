@@ -20,7 +20,6 @@ impl BGZFCache {
 /// A BGZF reader
 ///
 /// Decode BGZF file with seek support.
-///
 pub struct BGZFReader<R: Read + Seek> {
     reader: io::BufReader<R>,
     cache: HashMap<u64, BGZFCache>,
@@ -30,15 +29,15 @@ pub struct BGZFReader<R: Read + Seek> {
     current_position_in_block: usize,
 }
 
+const DEFAULT_CACHE_LIMIT: usize = 10;
+
 impl<R: Read + Seek> BGZFReader<R> {
+    /// Create a new BGZF reader from std::io::Read
     pub fn new(reader: R) -> Self {
         BGZFReader::with_buf_reader(io::BufReader::new(reader))
     }
-}
 
-const DEFAULT_CACHE_LIMIT: usize = 20;
-
-impl<R: Read + Seek> BGZFReader<R> {
+    /// Create a new BGZF reader from std::io::BufReader    
     pub fn with_buf_reader(reader: io::BufReader<R>) -> Self {
         BGZFReader {
             reader,
@@ -50,15 +49,25 @@ impl<R: Read + Seek> BGZFReader<R> {
         }
     }
 
+    /// Seek BGZF with position. This position is not equal to real file offset,
+    /// but equal to virtual file offset described in [BGZF format](https://samtools.github.io/hts-specs/SAMv1.pdf).
+    /// Please read "4.1.1 Random access" to learn more.
     pub fn bgzf_seek(&mut self, position: u64) -> Result<(), BGZFError> {
         self.current_block = position >> 16;
         self.current_position_in_block = (position & 0xffff) as usize;
-        println!(
-            "Seek {} {} {}",
-            position, self.current_block, self.current_position_in_block
-        );
+        // println!(
+        //     "Seek {} {} {}",
+        //     position, self.current_block, self.current_position_in_block
+        // );
         self.load_cache(self.current_block)?;
         Ok(())
+    }
+
+    /// Get BGZF virtual file offset. This position is not equal to real file offset,
+    /// but equal to virtual file offset described in [BGZF format](https://samtools.github.io/hts-specs/SAMv1.pdf).
+    /// Please read "4.1.1 Random access" to learn more.    
+    pub fn bgzf_pos(&self) -> u64 {
+        self.current_block << 16 | (self.current_position_in_block & 0xffff) as u64
     }
 
     fn load_cache(&mut self, block_position: u64) -> Result<(), BGZFError> {
@@ -88,6 +97,7 @@ impl<R: Read + Seek> BGZFReader<R> {
         if crc32 != loaded_crc32 {
             return Err(BGZFErrorKind::Other("Unmatched CRC32").into());
         }
+        self.cache_order.push(block_position);
         self.cache.insert(
             block_position,
             BGZFCache {
@@ -101,6 +111,36 @@ impl<R: Read + Seek> BGZFReader<R> {
     }
 }
 
+impl<R: Read + Seek> BufRead for BGZFReader<R> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        if !self.cache.contains_key(&self.current_block) {
+            self.load_cache(self.current_block)
+                .map_err(|x| io::Error::new(io::ErrorKind::Other, format!("{}", x)))?;
+        }
+
+        let block = self.cache.get(&self.current_block).unwrap();
+        let remain_bytes = block.buffer.len() - self.current_position_in_block;
+        if remain_bytes > 0 {
+            return Ok(&block.buffer[self.current_position_in_block..]);
+        }
+        unreachable!()
+    }
+
+    fn consume(&mut self, amt: usize) {
+        let block = self.cache.get(&self.current_block).unwrap();
+        let remain_bytes = block.buffer.len() - self.current_position_in_block;
+        if amt <= remain_bytes {
+            self.current_position_in_block += amt;
+            if self.current_position_in_block == block.buffer.len() {
+                self.current_block = block.next_block_position();
+                self.current_position_in_block = 0;
+            }
+        } else {
+            unreachable!()
+        }
+    }
+}
+
 impl<R: Read + Seek> Read for BGZFReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if !self.cache.contains_key(&self.current_block) {
@@ -111,15 +151,23 @@ impl<R: Read + Seek> Read for BGZFReader<R> {
         let load_size = buf
             .len()
             .min(block.buffer.len() - self.current_position_in_block);
-        buf.copy_from_slice(
+        buf[..load_size].copy_from_slice(
             &block.buffer
                 [self.current_position_in_block..(self.current_position_in_block + load_size)],
         );
         let extra_read_size = if load_size != buf.len() {
+            //println!("additional load");
             self.current_block = block.next_block_position();
             self.current_position_in_block = 0;
             self.read(&mut buf[load_size..])?
         } else {
+            //println!("OK");
+            self.current_position_in_block += load_size;
+            if self.current_position_in_block == block.buffer.len() {
+                println!("Prepare");
+                self.current_block = block.next_block_position();
+                self.current_position_in_block = 0;
+            }
             0
         };
 
@@ -133,20 +181,46 @@ mod test {
     use std::fs::File;
     #[test]
     fn test_read() -> Result<(), BGZFError> {
+        let mut expected_reader = io::BufReader::new(flate2::read::MultiGzDecoder::new(
+            File::open("testfiles/common_all_20180418_half.vcf.gz")?,
+        ));
         let mut reader = BGZFReader::new(File::open("testfiles/common_all_20180418_half.vcf.gz")?);
-        let mut buffer: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
-        reader.bgzf_seek(0)?;
-        reader.bgzf_seek(reader.cache.get(&0).unwrap().next_block_position() << 16)?;
+
+        let mut line1 = String::new();
+        let mut line2 = String::new();
+        for _ in 0..1000 {
+            line1.clear();
+            line2.clear();
+            reader.read_line(&mut line1)?;
+            expected_reader.read_line(&mut line2)?;
+            assert_eq!(line1, line2);
+            //println!("line: {}", line);
+        }
+        for _ in 0..1000 {
+            let mut buf1: [u8; 1000] = [0; 1000];
+            let mut buf2: [u8; 1000] = [0; 1000];
+            let read_len1 = reader.read(&mut buf1)?;
+            expected_reader.read_exact(&mut buf2)?;
+            assert_eq!(read_len1, buf1.len());
+            assert_eq!(&buf1[..], &buf2[..]);
+        }
+
+        let mut buffer: [u8; 8] = [0; 8];
         reader.bgzf_seek(35973)?;
+        assert_eq!(reader.bgzf_pos(), 35973);
         reader.read_exact(&mut buffer)?;
         assert!(buffer.starts_with(b"1\t"));
+        reader.bgzf_seek(reader.cache.get(&0).unwrap().next_block_position() << 16)?;
         reader.bgzf_seek(4210818610)?;
+        assert_eq!(reader.bgzf_pos(), 4210818610);
         reader.read_exact(&mut buffer)?;
         assert!(buffer.starts_with(b"1\t"));
         reader.bgzf_seek(9618658636)?;
+        assert_eq!(reader.bgzf_pos(), 9618658636);
         reader.read_exact(&mut buffer)?;
         assert!(buffer.starts_with(b"1\t"));
         reader.bgzf_seek(135183301012)?;
+        assert_eq!(reader.bgzf_pos(), 135183301012);
         reader.read_exact(&mut buffer)?;
         assert!(buffer.starts_with(b"11\t"));
         Ok(())

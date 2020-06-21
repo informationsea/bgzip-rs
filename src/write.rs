@@ -4,24 +4,31 @@ use flate2::Crc;
 use std::convert::TryInto;
 use std::io::{self, Write};
 
+/// A BGZF writer
 pub struct BGZFWriter<W: io::Write> {
     writer: W,
     buffer: Vec<u8>,
     compressed_buffer: Vec<u8>,
     compress_block_unit: usize,
     level: flate2::Compression,
+    closed: bool,
 }
 
+const COMPRESS_BLOCK_UNIT: usize = 1024 * 16;
+
 impl<W: io::Write> BGZFWriter<W> {
+    /// Create new BGZF writer from std::io::Write
     pub fn new(writer: W, level: flate2::Compression) -> Self {
         BGZFWriter {
             writer,
             buffer: Vec::new(),
             compressed_buffer: Vec::new(),
-            compress_block_unit: 1024 * 32,
+            compress_block_unit: COMPRESS_BLOCK_UNIT,
             level,
+            closed: false,
         }
     }
+
     fn write_block(&mut self) -> io::Result<()> {
         self.compressed_buffer.clear();
         let uncompressed_block_size = self.compress_block_unit.min(self.buffer.len());
@@ -44,9 +51,16 @@ impl<W: io::Write> BGZFWriter<W> {
         Ok(())
     }
 
+    /// Write end-of-file marker and close BGZF.
+    ///
+    /// Explicitly call of this method is not required. Drop trait will write end-of-file marker automatically.
+    /// If you need to handle I/O errors while closing, please use this method.
     pub fn close(mut self) -> io::Result<()> {
-        self.flush()?;
-        self.writer.write_all(FOOTER_BYTES)?;
+        if !self.closed {
+            self.flush()?;
+            self.writer.write_all(FOOTER_BYTES)?;
+            self.closed = true;
+        }
         Ok(())
     }
 }
@@ -74,8 +88,11 @@ const FOOTER_BYTES: &[u8] = &[
 
 impl<W: io::Write> Drop for BGZFWriter<W> {
     fn drop(&mut self) {
-        self.flush().unwrap();
-        self.writer.write_all(FOOTER_BYTES).unwrap();
+        if !self.closed {
+            self.flush().unwrap();
+            self.writer.write_all(FOOTER_BYTES).unwrap();
+            self.closed = true;
+        }
     }
 }
 

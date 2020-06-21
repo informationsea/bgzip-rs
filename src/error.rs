@@ -1,11 +1,13 @@
 use failure::{Backtrace, Context, Fail};
 use std::fmt::{self, Display};
 
+/// A BGZF error
 #[derive(Debug)]
 pub struct BGZFError {
     inner: failure::Context<BGZFErrorKind>,
 }
 
+/// A BGZF error kind.
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Fail)]
 pub enum BGZFErrorKind {
     #[fail(display = "Failed to parse header at position: {}", _0)]
