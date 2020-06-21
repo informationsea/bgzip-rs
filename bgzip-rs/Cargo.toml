@@ -1,8 +1,0 @@
-[package]
-name = "bgzip-rs"
-version = "0.1.0"
-authors = ["OKAMURA, Yasunobu <okamura@informationsea.info>"]
-
-[dependencies]
-bgzip = {path = ".."}
-clap = "2"
