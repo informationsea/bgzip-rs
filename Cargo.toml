@@ -10,6 +10,7 @@ repository = "https://github.com/informationsea/bgzip-rs"
 license = "MIT"
 keywords = ["bioinformatics", "bgzip", "gzip", "compression"]
 categories = ["compression"]
+exclude = ["testfiles", "tmp"]
 
 [badges]
 travis-ci = { repository = "informationsea/bgzip-rs", branch = "master" }
@@ -22,3 +23,4 @@ failure = "0.1"
 
 [dev-dependencies]
 csv = "1"
+clap = "2"
