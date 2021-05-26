@@ -92,10 +92,14 @@ impl<R: Read + Seek> BGZFReader<R> {
         let crc32 = self.reader.read_le_u32()?;
         let raw_length = self.reader.read_le_u32()?;
         if raw_length != buffer.len() as u32 {
-            return Err(BGZFErrorKind::Other("Unmatched length").into());
+            return Err(BGZFError::Other {
+                message: "Unmatched length",
+            });
         }
         if crc32 != loaded_crc32 {
-            return Err(BGZFErrorKind::Other("Unmatched CRC32").into());
+            return Err(BGZFError::Other {
+                message: "Unmatched CRC32",
+            });
         }
         self.cache_order.push(block_position);
         self.cache.insert(

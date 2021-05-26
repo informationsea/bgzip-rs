@@ -52,7 +52,7 @@ mod read;
 pub mod tabix;
 mod write;
 
-pub use error::{BGZFError, BGZFErrorKind};
+pub use error::BGZFError;
 pub use read::BGZFReader;
 pub use write::BGZFWriter;
 
