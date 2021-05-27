@@ -86,7 +86,7 @@ impl BGZFHeader {
                 bytes.copy_from_slice(&x.data[0..2]);
                 u16::from_le_bytes(bytes)
             })
-            .ok_or_else(|| BGZFErrorKind::NotBGZF.into())
+            .ok_or(BGZFError::NotBGZF)
     }
 
     pub fn header_size(&self) -> u64 {
@@ -111,15 +111,19 @@ impl BGZFHeader {
         let id1 = reader.read_le_u8()?;
         let id2 = reader.read_le_u8()?;
         if id1 != 31 || id2 != 139 {
-            return Err(BGZFErrorKind::NotBGZF.into());
+            return Err(BGZFError::NotBGZF);
         }
         let compression_method = reader.read_le_u8()?;
         if compression_method != DEFLATE {
-            return Err(BGZFErrorKind::Other("Unsupported compression method").into());
+            return Err(BGZFError::Other {
+                message: "Unsupported compression method",
+            });
         }
         let flags = reader.read_le_u8()?;
         if flags | 0x1f != 0x1f {
-            return Err(BGZFErrorKind::Other("Unsupported flag").into());
+            return Err(BGZFError::Other {
+                message: "Unsupported flag",
+            });
         }
         let modified_time = reader.read_le_u32()?;
         let extra_flags = reader.read_le_u8()?;
@@ -132,10 +136,7 @@ impl BGZFHeader {
                 let sub_field_id1 = reader.read_le_u8()?;
                 let sub_field_id2 = reader.read_le_u8()?;
                 let sub_field_len = reader.read_le_u16()?;
-                let mut buf = Vec::<u8>::with_capacity(sub_field_len as usize);
-                for _ in 0..sub_field_len {
-                    buf.push(0);
-                }
+                let mut buf: Vec<u8> = vec![0; sub_field_len as usize];
                 reader.read_exact(&mut buf)?;
                 fields.push(ExtraField {
                     sub_field_id1,
@@ -146,7 +147,9 @@ impl BGZFHeader {
                 remain_bytes -= 4 + sub_field_len;
             }
             if remain_bytes != 0 {
-                return Err(BGZFErrorKind::Other("Invalid extra field").into());
+                return Err(BGZFError::Other {
+                    message: "Invalid extra field",
+                });
             }
 
             (Some(len), fields)

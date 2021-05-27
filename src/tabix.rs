@@ -107,10 +107,7 @@ impl Tabix {
         let skip = reader.read_le_i32()?;
         let length_of_concatenated_sequence_names = reader.read_le_i32()?;
         let mut name_bytes: Vec<u8> =
-            Vec::with_capacity(length_of_concatenated_sequence_names.try_into().unwrap());
-        for _ in 0..length_of_concatenated_sequence_names {
-            name_bytes.push(0);
-        }
+            vec![0; length_of_concatenated_sequence_names.try_into().unwrap()];
         reader.read_exact(&mut name_bytes)?;
         let names = split_names(&name_bytes);
 

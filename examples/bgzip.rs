@@ -1,4 +1,4 @@
-use bgzip::{BGZFError, BGZFErrorKind, BGZFWriter};
+use bgzip::{BGZFError, BGZFWriter};
 use clap::{App, Arg};
 use std::fs;
 use std::io;
@@ -111,7 +111,9 @@ fn main() -> Result<(), BGZFError> {
                 };
 
                 if Path::new(&output_filename).exists() && !matches.is_present("force") {
-                    return Err(BGZFErrorKind::Other("already exist").into());
+                    return Err(BGZFError::Other {
+                        message: "already exist",
+                    });
                 }
                 (
                     Mode::Decompress,
@@ -120,7 +122,9 @@ fn main() -> Result<(), BGZFError> {
             } else {
                 let output_filename = format!("{}.gz", x);
                 if Path::new(&output_filename).exists() && !matches.is_present("force") {
-                    return Err(BGZFErrorKind::Other("already exist").into());
+                    return Err(BGZFError::Other {
+                        message: "already exist",
+                    });
                 }
 
                 (Mode::Compress, Box::new(fs::File::create(output_filename)?))

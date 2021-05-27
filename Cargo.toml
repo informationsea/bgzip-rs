@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2018"
 authors = ["OKAMURA, Yasunobu <okamura@informationsea.info>"]
 readme = "README.md"
-description = "Rust implentation of bgzip"
+description = "Rust implementation of bgzip"
 homepage = "https://github.com/informationsea/bgzip-rs"
 repository = "https://github.com/informationsea/bgzip-rs"
 license = "MIT"
@@ -19,8 +19,9 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 flate2 = "1"
-failure = "0.1"
+thiserror = "1.0"
 
 [dev-dependencies]
 csv = "1"
 clap = "2"
+tempfile = "3"
