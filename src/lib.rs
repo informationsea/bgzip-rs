@@ -119,4 +119,12 @@ mod test {
 
         Ok(())
     }
+
+    #[test]
+    fn test_read_all() -> Result<(), BGZFError> {
+        let reader =
+            BGZFReader::new(fs::File::open("testfiles/common_all_20180418_half.vcf.gz")?);
+        for _line in reader.lines() {}
+        Ok(())
+    }
 }

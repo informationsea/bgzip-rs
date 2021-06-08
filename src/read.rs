@@ -127,7 +127,7 @@ impl<R: Read + Seek> BufRead for BGZFReader<R> {
         if remain_bytes > 0 {
             return Ok(&block.buffer[self.current_position_in_block..]);
         }
-        unreachable!()
+        Ok(&[])
     }
 
     fn consume(&mut self, amt: usize) {
