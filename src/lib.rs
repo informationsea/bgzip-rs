@@ -119,4 +119,16 @@ mod test {
 
         Ok(())
     }
+
+    #[test]
+    fn test_read_all() -> Result<(), BGZFError> {
+        let reader = BGZFReader::new(fs::File::open("testfiles/common_all_20180418_half.vcf.gz")?);
+        let expected_reader = std::io::BufReader::new(flate2::read::MultiGzDecoder::new(
+            fs::File::open("testfiles/common_all_20180418_half.vcf.gz")?,
+        ));
+        for (line1, line2) in reader.lines().zip(expected_reader.lines()) {
+            assert_eq!(line1?, line2?);
+        }
+        Ok(())
+    }
 }
