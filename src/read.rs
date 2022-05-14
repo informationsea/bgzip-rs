@@ -168,7 +168,7 @@ impl<R: Read + Seek> Read for BGZFReader<R> {
             //println!("OK");
             self.current_position_in_block += load_size;
             if self.current_position_in_block == block.buffer.len() {
-                println!("Prepare");
+                // println!("Prepare");
                 self.current_block = block.next_block_position();
                 self.current_position_in_block = 0;
             }
