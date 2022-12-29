@@ -12,11 +12,6 @@ keywords = ["bioinformatics", "bgzip", "gzip", "compression"]
 categories = ["compression"]
 exclude = ["testfiles", "tmp"]
 
-[badges]
-travis-ci = { repository = "informationsea/bgzip-rs", branch = "master" }
-appveyor = { repository = "informationsea/bgzip-rs", branch = "master", service = "github" }
-maintenance = { status = "experimental" }
-
 [dependencies]
 flate2 = "1"
 thiserror = "1.0"
