@@ -1,6 +1,6 @@
 [package]
 name = "bgzip"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2018"
 authors = ["OKAMURA, Yasunobu <okamura@informationsea.info>"]
 readme = "README.md"
