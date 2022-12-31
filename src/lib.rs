@@ -86,7 +86,7 @@ pub(crate) trait BinaryReader: io::Read {
     }
 }
 
-impl<R: io::Read> BinaryReader for io::BufReader<R> {}
+impl<R: io::Read> BinaryReader for R {}
 
 #[cfg(test)]
 mod test {

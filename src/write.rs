@@ -14,16 +14,29 @@ pub struct BGZFWriter<W: io::Write> {
     closed: bool,
 }
 
-const COMPRESS_BLOCK_UNIT: usize = 1024 * 16;
+/// Default BGZF block size.
+pub const DEFAULT_COMPRESS_BLOCK_UNIT: usize = 65280;
 
 impl<W: io::Write> BGZFWriter<W> {
-    /// Create new BGZF writer from std::io::Write
+    /// Create new BGZF writer from [`std::io::Write`]
     pub fn new(writer: W, level: flate2::Compression) -> Self {
         BGZFWriter {
             writer,
             buffer: Vec::new(),
             compressed_buffer: Vec::new(),
-            compress_block_unit: COMPRESS_BLOCK_UNIT,
+            compress_block_unit: DEFAULT_COMPRESS_BLOCK_UNIT,
+            level,
+            closed: false,
+        }
+    }
+
+    /// Cerate new BGZF writer with block size.
+    pub fn with_block_size(writer: W, level: flate2::Compression, block_size: usize) -> Self {
+        BGZFWriter {
+            writer,
+            buffer: Vec::new(),
+            compressed_buffer: Vec::new(),
+            compress_block_unit: block_size,
             level,
             closed: false,
         }

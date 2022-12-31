@@ -9,9 +9,11 @@ pub enum BGZFError {
     NotTabix,
     #[error("not BGZF format")]
     NotBGZF,
-    #[error("I/O Error")]
+    #[error("not gzip format")]
+    NotGzip,
+    #[error("I/O Error: {0}")]
     IoError(#[from] std::io::Error),
-    #[error("Utf8 Error")]
+    #[error("Utf8 Error: {0}")]
     Utf8Error(#[from] std::str::Utf8Error),
     #[error("Error: {message:}")]
     Other { message: &'static str },

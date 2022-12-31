@@ -1,13 +1,16 @@
 use crate::*;
-use std::convert::TryInto;
 use std::io;
 use std::u32;
+
+pub const GZIP_ID1: u8 = 31;
+pub const GZIP_ID2: u8 = 139;
+
+pub const BGZIP_HEADER_SIZE: u16 = 20 + 6;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtraField {
     sub_field_id1: u8,
     sub_field_id2: u8,
-    field_length: u16,
     data: Vec<u8>,
 }
 
@@ -16,17 +19,29 @@ impl ExtraField {
         ExtraField {
             sub_field_id1: id1,
             sub_field_id2: id2,
-            field_length: data.len().try_into().unwrap(),
             data,
         }
     }
+
+    pub fn id1(&self) -> u8 {
+        self.sub_field_id1
+    }
+
+    pub fn id2(&self) -> u8 {
+        self.sub_field_id2
+    }
+
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
     pub fn field_len(&self) -> u16 {
-        self.field_length + 4
+        self.data.len() as u16 + 4
     }
 
     pub fn write(&self, writer: &mut impl io::Write) -> io::Result<()> {
         writer.write_all(&[self.sub_field_id1, self.sub_field_id2])?;
-        writer.write_all(&self.field_length.to_le_bytes())?;
+        writer.write_all(&(self.data.len() as u16).to_le_bytes())?;
         writer.write_all(&self.data)?;
         Ok(())
     }
@@ -34,15 +49,42 @@ impl ExtraField {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BGZFHeader {
+    /// Compress Method Field.
+    ///
+    /// Must be [`DEFLATE`]
     pub compression_method: u8,
+
+    /// Flags
+    ///
+    /// Combination of [`FLAG_FTEXT`], [`FLAG_FHCRC`], [`FLAG_FEXTRA`], [`FLAG_FNAME`] and [`FLAG_FCOMMENT`].
     pub flags: u8,
+
+    /// Modified date in unix epoch
+    ///
+    /// Set `0` if unknown.
     pub modified_time: u32,
+
+    /// Extra flags
     pub extra_flags: u8,
+
+    /// Operation System
+    ///
+    /// Common values are [`FILESYSTEM_UNKNOWN`], [`FILESYSTEM_FAT`], [`FILESYSTEM_NTFS`] and [`FILESYSTEM_UNIX`].
     pub operation_system: u8,
+
+    /// Length of extra field
     pub extra_field_len: Option<u16>,
+
+    /// Extra field content
     pub extra_field: Vec<ExtraField>,
+
+    /// Original filename
     pub file_name: Option<Vec<u8>>,
+
+    /// Comment
     pub comment: Option<Vec<u8>>,
+
+    /// CRC16 in header
     pub crc16: Option<u16>,
 }
 
@@ -60,7 +102,7 @@ pub const FILESYSTEM_UNKNOWN: u8 = 255;
 
 impl BGZFHeader {
     pub fn new(fast: bool, modified_time: u32, compressed_len: u16) -> Self {
-        let block_size = compressed_len + 20 + 6;
+        let block_size = compressed_len + BGZIP_HEADER_SIZE;
         let bgzf_field = ExtraField::new(66, 67, (block_size - 1).to_le_bytes().to_vec());
 
         BGZFHeader {
@@ -91,7 +133,7 @@ impl BGZFHeader {
 
     pub fn header_size(&self) -> u64 {
         10u64
-            + self.extra_field_len.map(|x| x.into()).unwrap_or(0)
+            + self.extra_field_len.map(|x| (x + 2).into()).unwrap_or(0)
             + self
                 .file_name
                 .as_ref()
@@ -105,13 +147,11 @@ impl BGZFHeader {
             + self.crc16.map(|_| 2).unwrap_or(0)
     }
 
-    pub(crate) fn from_reader<R: io::BufRead + BinaryReader>(
-        reader: &mut R,
-    ) -> Result<Self, BGZFError> {
+    pub fn from_reader<R: io::BufRead>(reader: &mut R) -> Result<Self, BGZFError> {
         let id1 = reader.read_le_u8()?;
         let id2 = reader.read_le_u8()?;
-        if id1 != 31 || id2 != 139 {
-            return Err(BGZFError::NotBGZF);
+        if id1 != GZIP_ID1 || id2 != GZIP_ID2 {
+            return Err(BGZFError::NotGzip);
         }
         let compression_method = reader.read_le_u8()?;
         if compression_method != DEFLATE {
@@ -141,7 +181,6 @@ impl BGZFHeader {
                 fields.push(ExtraField {
                     sub_field_id1,
                     sub_field_id2,
-                    field_length: sub_field_len,
                     data: buf,
                 });
                 remain_bytes -= 4 + sub_field_len;
@@ -156,6 +195,7 @@ impl BGZFHeader {
         } else {
             (None, Vec::new())
         };
+
         let file_name = if flags & FLAG_FNAME != 0 {
             let mut buf = Vec::new();
             reader.read_until(0, &mut buf)?;
@@ -163,6 +203,7 @@ impl BGZFHeader {
         } else {
             None
         };
+
         let comment = if flags & FLAG_FCOMMENT != 0 {
             let mut buf = Vec::new();
             reader.read_until(0, &mut buf)?;
@@ -170,6 +211,7 @@ impl BGZFHeader {
         } else {
             None
         };
+
         let crc16 = if flags & FLAG_FHCRC != 0 {
             Some(reader.read_le_u16()?)
         } else {
@@ -191,11 +233,42 @@ impl BGZFHeader {
     }
 
     pub fn write(&self, writer: &mut impl io::Write) -> io::Result<()> {
-        writer.write_all(&[31, 139, self.compression_method, self.flags])?;
+        let mut calculated_flags = self.flags & FLAG_FTEXT;
+        if self.file_name.is_some() {
+            calculated_flags |= FLAG_FNAME;
+        }
+        if self.comment.is_some() {
+            calculated_flags |= FLAG_FCOMMENT;
+        }
+        if self.crc16.is_some() {
+            calculated_flags |= FLAG_FHCRC;
+        }
+        if self.extra_field_len.is_some() {
+            calculated_flags |= FLAG_FEXTRA;
+        }
+        if calculated_flags != self.flags {
+            return Err(io::Error::new(io::ErrorKind::Other, "Invalid bgzip flag"));
+        }
+
+        writer.write_all(&[
+            GZIP_ID1,
+            GZIP_ID2,
+            self.compression_method,
+            calculated_flags,
+        ])?;
         writer.write_all(&self.modified_time.to_le_bytes())?;
         writer.write_all(&[self.extra_flags, self.operation_system])?;
         if let Some(extra_field_len) = self.extra_field_len {
+            let total_xlen: u16 = self.extra_field.iter().map(|x| x.field_len()).sum();
+            if total_xlen != extra_field_len {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Invalid bgzip extra field length",
+                ));
+            }
+
             writer.write_all(&extra_field_len.to_le_bytes())?;
+
             for extra in self.extra_field.iter() {
                 extra.write(writer)?;
             }
@@ -234,7 +307,9 @@ mod test {
         assert_eq!(header.flags, 4);
         assert_eq!(header.extra_field_len, Some(6));
         assert_eq!(header.extra_field[0].data.len(), 2);
-        assert_eq!(header.extra_field[0].field_length, 2);
+        let mut buf: Vec<u8> = Vec::new();
+        header.write(&mut buf)?;
+        assert_eq!(buf.len(), header.header_size() as usize);
         Ok(())
     }
 
@@ -252,6 +327,9 @@ mod test {
             header.file_name,
             Some(b"common_all_20180418_half.vcf.nobgzip\0".to_vec())
         );
+        let mut buf: Vec<u8> = Vec::new();
+        header.write(&mut buf)?;
+        assert_eq!(buf.len(), header.header_size() as usize);
         Ok(())
     }
 }

@@ -1,5 +1,6 @@
 use bgzip::{BGZFError, BGZFWriter};
-use clap::{App, Arg};
+use clap::Parser;
+use flate2::Compression;
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -10,85 +11,43 @@ enum Mode {
     Decompress,
 }
 
-fn main() -> Result<(), BGZFError> {
-    let matches = App::new("bgzip")
-        .version("0.1.0")
-        .author("Okamura, Yasunobu")
-        .about("Rust implementation of bgzip")
-        .arg(
-            Arg::with_name("decompress")
-                .short("d")
-                .long("decompress")
-                .conflicts_with("compress")
-                .help("Force decompress"),
-        )
-        .arg(
-            Arg::with_name("compress")
-                .short("z")
-                .long("compress")
-                .conflicts_with("decompress")
-                .help("Force compress"),
-        )
-        .arg(
-            Arg::with_name("keep")
-                .short("k")
-                .long("keep")
-                .help("keep input files"),
-        )
-        .arg(
-            Arg::with_name("stdout")
-                .short("c")
-                .long("stdout")
-                .help("write on standard output"),
-        )
-        .arg(
-            Arg::with_name("fast")
-                .short("1")
-                .long("fast")
-                .conflicts_with("better")
-                .help("compress faster"),
-        )
-        .arg(
-            Arg::with_name("better")
-                .short("9")
-                .long("best")
-                .conflicts_with("fast")
-                .help("compress better"),
-        )
-        .arg(
-            Arg::with_name("force")
-                .short("f")
-                .long("force")
-                .help("overwrite existing file"),
-        )
-        .arg(
-            Arg::with_name("files")
-                .index(1)
-                .takes_value(true)
-                .multiple(true),
-        )
-        .get_matches();
+#[derive(Debug, Parser)]
+#[command(author, version, about, long_about)]
+struct Args {
+    #[arg(short, long, conflicts_with = "compress")]
+    decompress: bool,
+    #[arg(short, long, conflicts_with = "decompress")]
+    compress: bool,
+    #[arg(short, long)]
+    keep: bool,
+    #[arg(short, long)]
+    force: bool,
+    #[arg(short = 'c', long)]
+    stdout: bool,
+    #[arg(short = 'l', long = "compress-level")]
+    compress_level: Option<u32>,
+    #[command()]
+    files: Option<Vec<String>>,
+}
 
-    let level = if matches.is_present("best") {
-        flate2::Compression::best()
-    } else if matches.is_present("fast") {
-        flate2::Compression::fast()
+fn main() -> Result<(), BGZFError> {
+    let matches = Args::parse();
+    let level = if let Some(compression_level) = matches.compress_level {
+        if compression_level > 9 {
+            panic!("Invalid compression level: {}", compression_level);
+        }
+        Compression::new(compression_level)
     } else {
-        flate2::Compression::default()
+        Compression::default()
     };
 
     let stdin = io::stdin();
     let stdout = io::stdout();
 
-    let files: Vec<Option<String>> = if let Some(files) = matches.values_of("files") {
+    let files: Vec<Option<String>> = if let Some(files) = matches.files {
         files
-            .map(|x| {
-                if x == "-" || matches.is_present("stdout") {
-                    None
-                } else {
-                    Some(x.to_string())
-                }
-            })
+            .iter()
+            .map(|x| if x == "-" { None } else { Some(x.to_string()) })
             .collect()
     } else {
         vec![None]
@@ -101,16 +60,14 @@ fn main() -> Result<(), BGZFError> {
             Box::new(stdin.lock())
         };
         let (mode, mut output): (Mode, Box<dyn io::Write>) = if let Some(x) = one {
-            if matches.is_present("decompress")
-                || (x.ends_with(".gz") && !matches.is_present("compress"))
-            {
+            if matches.decompress || (x.ends_with(".gz") && !matches.compress) {
                 let output_filename = if x.ends_with(".gz") {
                     x[..x.len() - 3].to_string()
                 } else {
                     format!("{}.decompressed", x)
                 };
 
-                if Path::new(&output_filename).exists() && !matches.is_present("force") {
+                if Path::new(&output_filename).exists() && !matches.force {
                     return Err(BGZFError::Other {
                         message: "already exist",
                     });
@@ -121,7 +78,7 @@ fn main() -> Result<(), BGZFError> {
                 )
             } else {
                 let output_filename = format!("{}.gz", x);
-                if Path::new(&output_filename).exists() && !matches.is_present("force") {
+                if Path::new(&output_filename).exists() && !matches.force {
                     return Err(BGZFError::Other {
                         message: "already exist",
                     });
@@ -129,7 +86,7 @@ fn main() -> Result<(), BGZFError> {
 
                 (Mode::Compress, Box::new(fs::File::create(output_filename)?))
             }
-        } else if matches.is_present("decompress") {
+        } else if matches.decompress {
             (Mode::Decompress, Box::new(stdout.lock()))
         } else {
             (Mode::Compress, Box::new(stdout.lock()))
