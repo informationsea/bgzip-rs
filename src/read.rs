@@ -28,7 +28,6 @@ pub struct BGZFReader<R: Read + Seek> {
     cache_limit: usize,
     current_block: u64,
     current_position_in_block: usize,
-    last_block_pos: Option<u64>,
 }
 
 const DEFAULT_CACHE_LIMIT: usize = 10;
@@ -48,7 +47,6 @@ impl<R: Read + Seek> BGZFReader<R> {
             current_block: 0,
             cache_limit: DEFAULT_CACHE_LIMIT,
             current_position_in_block: 0,
-            last_block_pos: None,
         }
     }
 
