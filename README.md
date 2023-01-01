@@ -2,7 +2,9 @@ bgzip-rs
 ========
 
 [![Build](https://github.com/informationsea/bgzip-rs/actions/workflows/build.yml/badge.svg)](https://github.com/informationsea/bgzip-rs/actions/workflows/build.yml)
-[![Creates.io](http://meritbadge.herokuapp.com/bgzip)](https://crates.io/crates/bgzip)
+[![Crates.io](https://img.shields.io/crates/v/bgzip)](https://crates.io/crates/bgzip)
+[![Crates.io](https://img.shields.io/crates/d/bgzip)](https://crates.io/crates/bgzip)
+[![Crates.io](https://img.shields.io/crates/l/bgzip)](https://crates.io/crates/bgzip)
 [![doc-rs](https://docs.rs/bgzip/badge.svg)](https://docs.rs/bgzip)
 
 Rust implementation of BGZF
