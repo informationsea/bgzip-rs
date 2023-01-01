@@ -41,7 +41,3 @@ pub fn reg2bins(beg: i64, end: i64, min_shift: u32, depth: u32) -> Vec<u32> {
 
     bins
 }
-
-pub fn bin_limit(depth: u32) -> u32 {
-    return ((1 << (depth + 1) * 3) - 1) / 7;
-}

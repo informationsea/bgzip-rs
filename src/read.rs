@@ -1,4 +1,5 @@
 use crate::header::BGZFHeader;
+use crate::write::DEFAULT_COMPRESS_BLOCK_UNIT;
 use crate::*;
 use std::collections::HashMap;
 use std::io;
@@ -27,6 +28,7 @@ pub struct BGZFReader<R: Read + Seek> {
     cache_limit: usize,
     current_block: u64,
     current_position_in_block: usize,
+    last_block_pos: Option<u64>,
 }
 
 const DEFAULT_CACHE_LIMIT: usize = 10;
@@ -46,6 +48,7 @@ impl<R: Read + Seek> BGZFReader<R> {
             current_block: 0,
             cache_limit: DEFAULT_CACHE_LIMIT,
             current_position_in_block: 0,
+            last_block_pos: None,
         }
     }
 
@@ -71,7 +74,9 @@ impl<R: Read + Seek> BGZFReader<R> {
     }
 
     fn load_cache(&mut self, block_position: u64) -> Result<(), BGZFError> {
+        eprintln!("load cache: {}", block_position);
         if self.cache.contains_key(&block_position) {
+            eprintln!("Cached OK");
             return Ok(());
         }
         if self.cache_limit <= self.cache_order.len() {
@@ -79,9 +84,20 @@ impl<R: Read + Seek> BGZFReader<R> {
             self.cache.remove(&remove_block);
         }
         self.reader.seek(io::SeekFrom::Start(block_position))?;
+        eprintln!("seek ok");
 
-        let header = BGZFHeader::from_reader(&mut self.reader)?;
-        let mut buffer: Vec<u8> = Vec::with_capacity(1024 * 32);
+        let header = match BGZFHeader::from_reader(&mut self.reader) {
+            Ok(header) => header,
+            Err(BGZFError::IoError(e)) => {
+                if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                    return Ok(());
+                }
+                return Err(BGZFError::IoError(e));
+            }
+            Err(e) => return Err(e),
+        };
+        eprintln!("header ok");
+        let mut buffer: Vec<u8> = Vec::with_capacity(DEFAULT_COMPRESS_BLOCK_UNIT);
         let loaded_crc32 = {
             let mut inflate =
                 flate2::CrcReader::new(flate2::bufread::DeflateDecoder::new(&mut self.reader));
@@ -101,6 +117,7 @@ impl<R: Read + Seek> BGZFReader<R> {
                 message: "Unmatched CRC32",
             });
         }
+
         self.cache_order.push(block_position);
         self.cache.insert(
             block_position,
@@ -109,6 +126,10 @@ impl<R: Read + Seek> BGZFReader<R> {
                 header,
                 buffer,
             },
+        );
+        eprintln!(
+            "OK: {}",
+            self.cache.get(&block_position).unwrap().buffer.len()
         );
 
         Ok(())
@@ -122,8 +143,12 @@ impl<R: Read + Seek> BufRead for BGZFReader<R> {
                 .map_err(|x| io::Error::new(io::ErrorKind::Other, format!("{}", x)))?;
         }
 
-        let block = self.cache.get(&self.current_block).unwrap();
+        let block = match self.cache.get(&self.current_block) {
+            Some(value) => value,
+            None => return Ok(&[]),
+        };
         let remain_bytes = block.buffer.len() - self.current_position_in_block;
+
         if remain_bytes > 0 {
             return Ok(&block.buffer[self.current_position_in_block..]);
         }
@@ -131,7 +156,7 @@ impl<R: Read + Seek> BufRead for BGZFReader<R> {
     }
 
     fn consume(&mut self, amt: usize) {
-        let block = self.cache.get(&self.current_block).unwrap();
+        let block = self.cache.get(&self.current_block).expect("No cache data");
         let remain_bytes = block.buffer.len() - self.current_position_in_block;
         if amt <= remain_bytes {
             self.current_position_in_block += amt;
@@ -151,7 +176,10 @@ impl<R: Read + Seek> Read for BGZFReader<R> {
             self.load_cache(self.current_block)
                 .map_err(|x| io::Error::new(io::ErrorKind::Other, format!("{}", x)))?;
         }
-        let block = self.cache.get(&self.current_block).unwrap();
+        let block = match self.cache.get(&self.current_block) {
+            Some(v) => v,
+            None => return Ok(0),
+        };
         let load_size = buf
             .len()
             .min(block.buffer.len() - self.current_position_in_block);
@@ -227,6 +255,21 @@ mod test {
         assert_eq!(reader.bgzf_pos(), 135183301012);
         reader.read_exact(&mut buffer)?;
         assert!(buffer.starts_with(b"11\t"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_read_all() -> anyhow::Result<()> {
+        let mut expected_data_reader =
+            flate2::read::MultiGzDecoder::new(File::open("testfiles/generated.bed.gz")?);
+        let mut expected_data = Vec::new();
+        expected_data_reader.read_to_end(&mut expected_data)?;
+
+        let mut data_reader = crate::BGZFReader::new(File::open("testfiles/generated.bed.gz")?);
+        let mut data = Vec::new();
+        data_reader.read_to_end(&mut data)?;
+        assert_eq!(data, expected_data);
+
         Ok(())
     }
 }
