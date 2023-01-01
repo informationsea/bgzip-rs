@@ -57,6 +57,8 @@ pub use error::BGZFError;
 pub use read::BGZFReader;
 pub use write::BGZFWriter;
 
+pub use flate2::Compression;
+
 use std::io;
 
 pub(crate) trait BinaryReader: io::Read {

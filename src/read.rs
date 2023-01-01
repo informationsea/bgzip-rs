@@ -56,10 +56,6 @@ impl<R: Read + Seek> BGZFReader<R> {
     pub fn bgzf_seek(&mut self, position: u64) -> Result<(), BGZFError> {
         self.current_block = position >> 16;
         self.current_position_in_block = (position & 0xffff) as usize;
-        // println!(
-        //     "Seek {} {} {}",
-        //     position, self.current_block, self.current_position_in_block
-        // );
         self.load_cache(self.current_block)?;
         Ok(())
     }
@@ -72,9 +68,7 @@ impl<R: Read + Seek> BGZFReader<R> {
     }
 
     fn load_cache(&mut self, block_position: u64) -> Result<(), BGZFError> {
-        eprintln!("load cache: {}", block_position);
         if self.cache.contains_key(&block_position) {
-            eprintln!("Cached OK");
             return Ok(());
         }
         if self.cache_limit <= self.cache_order.len() {
@@ -82,7 +76,6 @@ impl<R: Read + Seek> BGZFReader<R> {
             self.cache.remove(&remove_block);
         }
         self.reader.seek(io::SeekFrom::Start(block_position))?;
-        eprintln!("seek ok");
 
         let header = match BGZFHeader::from_reader(&mut self.reader) {
             Ok(header) => header,
@@ -94,7 +87,6 @@ impl<R: Read + Seek> BGZFReader<R> {
             }
             Err(e) => return Err(e),
         };
-        eprintln!("header ok");
         let mut buffer: Vec<u8> = Vec::with_capacity(DEFAULT_COMPRESS_BLOCK_UNIT);
         let loaded_crc32 = {
             let mut inflate =
@@ -124,10 +116,6 @@ impl<R: Read + Seek> BGZFReader<R> {
                 header,
                 buffer,
             },
-        );
-        eprintln!(
-            "OK: {}",
-            self.cache.get(&block_position).unwrap().buffer.len()
         );
 
         Ok(())

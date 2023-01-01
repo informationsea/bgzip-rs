@@ -111,9 +111,11 @@ impl<W: io::Write> Drop for BGZFWriter<W> {
 
 #[cfg(test)]
 mod test {
+    use crate::{BGZFReader, BinaryReader};
+
     use super::*;
-    use std::fs;
-    use std::io::Write;
+    use std::fs::{self, File};
+    use std::io::{BufReader, Read, Write};
 
     #[test]
     fn test_vcf() -> io::Result<()> {
@@ -135,6 +137,68 @@ mod test {
             flate2::Compression::default(),
         );
         writer.write_all(b"1234")?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_bed() -> anyhow::Result<()> {
+        const TEST_OUTPUT_PATH: &str = "target/test.bed.gz";
+
+        let mut writer = BGZFWriter::new(
+            fs::File::create(TEST_OUTPUT_PATH)?,
+            flate2::Compression::default(),
+        );
+
+        let mut all_data = Vec::new();
+        let mut data_reader =
+            flate2::read::MultiGzDecoder::new(fs::File::open("testfiles/generated.bed.gz")?);
+        data_reader.read_to_end(&mut all_data)?;
+        writer.write_all(&all_data)?;
+
+        std::mem::drop(data_reader);
+        std::mem::drop(writer);
+
+        let mut result_data = Vec::new();
+        let mut result_reader = BGZFReader::new(BufReader::new(File::open(TEST_OUTPUT_PATH)?));
+        result_reader.read_to_end(&mut result_data)?;
+        assert_eq!(result_data, all_data);
+
+        let mut result_reader = BufReader::new(File::open(TEST_OUTPUT_PATH)?);
+        let mut decompress = flate2::Decompress::new(false);
+
+        loop {
+            let header = crate::header::BGZFHeader::from_reader(&mut result_reader)?;
+            assert_eq!(header.comment, None);
+            assert_eq!(header.file_name, None);
+            assert_eq!(header.modified_time, 0);
+            let block_size = header.block_size()?;
+            let compressed_data_len = block_size as i64 - 19 - 6;
+            let mut compressed_data = vec![0u8; compressed_data_len as usize];
+            result_reader.read_exact(&mut compressed_data)?;
+            let crc32 = result_reader.read_le_u32()?;
+            let uncompressed_data_len = result_reader.read_le_u32()?;
+            if uncompressed_data_len == 0 {
+                break;
+            }
+            let mut decompressed_data = vec![0u8; (uncompressed_data_len) as usize];
+            decompress.reset(false);
+            assert_eq!(
+                decompress.decompress(
+                    &compressed_data,
+                    &mut decompressed_data,
+                    flate2::FlushDecompress::None,
+                )?,
+                flate2::Status::StreamEnd
+            );
+            assert_eq!(decompressed_data.len(), uncompressed_data_len as usize);
+            let mut crc = flate2::Crc::new();
+            crc.update(&decompressed_data);
+            assert_eq!(crc.sum(), crc32);
+        }
+
+        let mut buf = vec![0u8; 100];
+        assert_eq!(result_reader.read(&mut buf)?, 0);
+
         Ok(())
     }
 }
