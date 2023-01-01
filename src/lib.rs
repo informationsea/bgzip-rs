@@ -45,6 +45,7 @@
 
 mod error;
 
+pub(crate) mod csi;
 /// BGZ header parser
 pub mod header;
 mod read;

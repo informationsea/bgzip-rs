@@ -89,7 +89,7 @@ pub struct Tabix {
 }
 
 impl Tabix {
-    pub fn from_reader(reader: &mut impl Read) -> Result<Self> {
+    pub fn from_reader<R: Read>(reader: R) -> Result<Self> {
         let mut reader = io::BufReader::new(flate2::read::MultiGzDecoder::new(reader));
 
         let mut buf: [u8; 4] = [0, 0, 0, 0];
@@ -147,36 +147,23 @@ fn split_names(data: &[u8]) -> Vec<Vec<u8>> {
     result
 }
 
-/* calculate bin given an alignment covering [beg,end) (zero-based, half-close-half-open) */
-pub fn reg2bin(beg: i64, end: i64, min_shift: i32, depth: i32) -> i32 {
-    let end = end - 1;
-    let mut l = depth;
-    let mut s = min_shift;
-    let mut t = ((1 << (depth * 3)) - 1) / 7;
+const MIN_SHIFT: u32 = 14;
+const DEPTH: u32 = 5;
 
-    while l > 0 {
-        if beg >> s == end >> s {
-            return t + (beg >> s) as i32;
-        };
-        l -= 1;
-        s += 3;
-        t -= 1 << (l * 3);
-    }
-    0
+/// calculate the list of bins that may overlap with region [beg,end) (zero-based)
+pub fn reg2bin(beg: u32, end: u32) -> u32 {
+    crate::csi::reg2bin(beg.into(), end.into(), MIN_SHIFT, DEPTH)
 }
-// /* calculate the list of bins that may overlap with region [beg,end) (zero-based) */
-// int reg2bins(int64_t beg, int64_t end, int min_shift, int depth, int *bins)
-// {
-// int l, t, n, s = min_shift + depth*3;
-// for (--end, l = n = t = 0; l <= depth; s -= 3, t += 1<<l*3, ++l) {
-// int b = t + (beg>>s), e = t + (end>>s), i;
-// for (i = b; i <= e; ++i) bins[n++] = i;
-// }
-// return n;
-//}
+
+/// calculate the list of bins that may overlap with region [beg,end) (zero-based)
+pub fn reg2bins(beg: u32, end: u32) -> Vec<u32> {
+    crate::csi::reg2bins(beg.into(), end.into(), MIN_SHIFT, DEPTH)
+}
 
 #[cfg(test)]
 mod test {
+    use anyhow::anyhow;
+
     use super::*;
     use std::fs::File;
     use std::str;
@@ -212,6 +199,51 @@ mod test {
             }
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_bins() -> anyhow::Result<()> {
+        let mut reader = csv::ReaderBuilder::new()
+            .delimiter(b'\t')
+            .quoting(false)
+            .from_reader(flate2::read::MultiGzDecoder::new(File::open(
+                "testfiles/bins.tsv.gz",
+            )?));
+        for row in reader.records() {
+            let row = row?;
+            let start: u64 = row.get(1).ok_or_else(|| anyhow!("No Start"))?.parse()?;
+            let end: u64 = row.get(2).ok_or_else(|| anyhow!("No End"))?.parse()?;
+            let bin: u32 = row.get(3).ok_or_else(|| anyhow!("No Bin"))?.parse()?;
+            let mut bins: Vec<u32> = row
+                .get(4)
+                .ok_or_else(|| anyhow!("No Bins"))?
+                .split(',')
+                .map(|x| x.parse().expect("Invalid bin"))
+                .collect();
+
+            let calculated_bin = reg2bin(
+                start.try_into().expect("Too large start"),
+                end.try_into().expect("Too large end"),
+            );
+            let mut calculated_bins = reg2bins(
+                start.try_into().expect("Too large start"),
+                end.try_into().expect("Too large end"),
+            );
+            bins.sort();
+            calculated_bins.sort();
+
+            assert_eq!(
+                bin, calculated_bin,
+                "Start: {} / End: {} / Calculated bin: {} / Expected bin: {}",
+                start, end, calculated_bin, bin,
+            );
+            assert_eq!(
+                bins, calculated_bins,
+                "Start: {} / End: {} / Calculated bins: {:?} / Expected bins: {:?}",
+                start, end, calculated_bins, bins,
+            );
+        }
         Ok(())
     }
 }
