@@ -77,3 +77,21 @@ jobs:
         with:
           command: test
           args: --release --target ${{ matrix.config.target }}
+      - name: Test without rayon
+        if: ${{ matrix.config.test }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features --features rust_backend --release --target ${{ matrix.config.target }}
+      - name: Test with zlib
+        if: ${{ matrix.config.test }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features --features zlib --release --target ${{ matrix.config.target }}
+      - name: Test with zlib-ng and rayon
+        if: ${{ matrix.config.test }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features --features rayon,zlib-ng --release --target ${{ matrix.config.target }}
