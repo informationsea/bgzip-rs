@@ -38,7 +38,7 @@ impl WriteBlock {
 /// A Multi-thread BGZF writer
 pub struct BGZFMultiThreadWriter<W: Write> {
     writer: W,
-    block_size: usize,
+    compress_unit_size: usize,
     block_list: Vec<WriteBlock>,
     write_waiting_blocks: HashMap<u64, WriteBlock>,
     writer_receiver: Receiver<WriteBlock>,
@@ -49,12 +49,16 @@ pub struct BGZFMultiThreadWriter<W: Write> {
 
 impl<W: Write> BGZFMultiThreadWriter<W> {
     pub fn new(writer: W, level: Compression) -> Result<Self> {
-        Self::with_block_size(writer, crate::write::DEFAULT_COMPRESS_BLOCK_SIZE, level)
+        Self::with_compress_unit_size(writer, crate::write::DEFAULT_COMPRESS_UNIT_SIZE, level)
     }
 
     /// Create new
-    pub fn with_block_size(writer: W, block_size: usize, level: Compression) -> Result<Self> {
-        if block_size >= crate::write::MAXIMUM_COMPRESS_BLOCK_SIZE {
+    pub fn with_compress_unit_size(
+        writer: W,
+        compress_unit_size: usize,
+        level: Compression,
+    ) -> Result<Self> {
+        if compress_unit_size >= crate::write::MAXIMUM_COMPRESS_UNIT_SIZE {
             return Err(Error::new(
                 ErrorKind::Other,
                 "Too large compress block size",
@@ -65,9 +69,9 @@ impl<W: Write> BGZFMultiThreadWriter<W> {
 
         Ok(BGZFMultiThreadWriter {
             writer,
-            block_size,
+            compress_unit_size,
             block_list: (0..(rayon::current_num_threads()))
-                .map(|_| WriteBlock::new(level, block_size))
+                .map(|_| WriteBlock::new(level, compress_unit_size))
                 .collect(),
             write_waiting_blocks: HashMap::new(),
             writer_receiver: rx,
@@ -161,7 +165,7 @@ impl<W: Write> Write for BGZFMultiThreadWriter<W> {
         while wrote_bytes < buf.len() {
             self.process_buffer(self.block_list.is_empty(), false)?;
             let current_buffer = self.block_list.get_mut(0).unwrap();
-            let remain_buffer = self.block_size - current_buffer.raw_buffer.len();
+            let remain_buffer = self.compress_unit_size - current_buffer.raw_buffer.len();
             let bytes_to_write = remain_buffer.min(buf.len() - wrote_bytes);
             current_buffer
                 .raw_buffer
@@ -217,7 +221,7 @@ mod test {
         let path = "./target/test_thread_writer.data.gz";
         let write_file = std::io::BufWriter::new(std::fs::File::create(path)?);
         let mut writer =
-            BGZFMultiThreadWriter::with_block_size(write_file, 1024, Compression::best())?;
+            BGZFMultiThreadWriter::with_compress_unit_size(write_file, 1024, Compression::best())?;
 
         let mut data = vec![0; BUF_SIZE];
 

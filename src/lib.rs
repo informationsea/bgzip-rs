@@ -10,6 +10,7 @@
 //! -------------
 //!
 //! * `rayon`: Enable [rayon](https://github.com/rayon-rs/rayon) based multi-threaded writer. This is default feature.
+//! * `log`: Enable [log](https://github.com/rust-lang/log) crate to log warnings. This is default feature.
 //! * `rust_backend`: use `miniz_oxide` crate for [flate2](https://github.com/rust-lang/flate2-rs) backend. This is default feature.
 //! * `zlib`: use `zlib` for flate2 backend. Please read [flate2](https://github.com/rust-lang/flate2-rs) description for the detail.
 //! * `zlib-ng`: use `zlib-ng` for flate2 backend. Please read [flate2](https://github.com/rust-lang/flate2-rs) description for the detail.

@@ -9,37 +9,41 @@ pub struct BGZFWriter<W: io::Write> {
     buffer: Vec<u8>,
     compressed_buffer: Vec<u8>,
     compress: Compress,
-    compress_block_unit: usize,
+    compress_unit_size: usize,
     closed: bool,
 }
 
 /// Default BGZF block size.
-pub const DEFAULT_COMPRESS_BLOCK_SIZE: usize = 65280;
-pub const MAXIMUM_COMPRESS_BLOCK_SIZE: usize = 64 * 1024;
+pub const DEFAULT_COMPRESS_UNIT_SIZE: usize = 65280;
+pub const MAXIMUM_COMPRESS_UNIT_SIZE: usize = 64 * 1024;
 pub(crate) const EXTRA_COMPRESS_BUFFER_SIZE: usize = 500;
 
 impl<W: io::Write> BGZFWriter<W> {
     /// Create new BGZF writer from [`std::io::Write`]
     pub fn new(writer: W, level: flate2::Compression) -> Self {
-        Self::with_block_size(writer, level, DEFAULT_COMPRESS_BLOCK_SIZE)
+        Self::with_compress_unit_size(writer, level, DEFAULT_COMPRESS_UNIT_SIZE)
     }
 
     /// Cerate new BGZF writer with block size.
-    pub fn with_block_size(writer: W, level: flate2::Compression, block_size: usize) -> Self {
+    pub fn with_compress_unit_size(
+        writer: W,
+        level: flate2::Compression,
+        compress_unit_size: usize,
+    ) -> Self {
         let mut compressed_buffer = Vec::new();
-        compressed_buffer.reserve(block_size + EXTRA_COMPRESS_BUFFER_SIZE);
+        compressed_buffer.reserve(compress_unit_size + EXTRA_COMPRESS_BUFFER_SIZE);
         BGZFWriter {
             writer,
             buffer: Vec::new(),
             compressed_buffer,
-            compress_block_unit: block_size,
+            compress_unit_size,
             compress: Compress::new(level, false),
             closed: false,
         }
     }
 
     fn write_block(&mut self) -> io::Result<()> {
-        let uncompressed_block_size = self.compress_block_unit.min(self.buffer.len());
+        let uncompressed_block_size = self.compress_unit_size.min(self.buffer.len());
         write_block(
             &mut self.writer,
             &self.buffer[..uncompressed_block_size],
@@ -69,7 +73,7 @@ impl<W: io::Write> BGZFWriter<W> {
 impl<W: io::Write> io::Write for BGZFWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.buffer.extend_from_slice(buf);
-        while self.compress_block_unit < self.buffer.len() {
+        while self.compress_unit_size < self.buffer.len() {
             self.write_block()?;
         }
         Ok(buf.len())
