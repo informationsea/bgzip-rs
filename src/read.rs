@@ -28,6 +28,7 @@ pub struct BGZFReader<R: Read + Seek> {
     cache_limit: usize,
     current_block: u64,
     current_position_in_block: usize,
+    eof_pos: u64,
 }
 
 const DEFAULT_CACHE_LIMIT: usize = 10;
@@ -47,6 +48,7 @@ impl<R: Read + Seek> BGZFReader<R> {
             current_block: 0,
             cache_limit: DEFAULT_CACHE_LIMIT,
             current_position_in_block: 0,
+            eof_pos: u64::MAX,
         }
     }
 
@@ -71,6 +73,9 @@ impl<R: Read + Seek> BGZFReader<R> {
         if self.cache.contains_key(&block_position) {
             return Ok(());
         }
+        if block_position >= self.eof_pos {
+            return Ok(());
+        }
         if self.cache_limit <= self.cache_order.len() {
             let remove_block = self.cache_order.remove(0);
             self.cache.remove(&remove_block);
@@ -81,6 +86,8 @@ impl<R: Read + Seek> BGZFReader<R> {
             Ok(header) => header,
             Err(BGZFError::IoError(e)) => {
                 if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                    #[cfg(feature = "log")]
+                    log::warn!("Unexpected EOF: no EOF marker at the end");
                     return Ok(());
                 }
                 return Err(BGZFError::IoError(e));
@@ -106,6 +113,11 @@ impl<R: Read + Seek> BGZFReader<R> {
             return Err(BGZFError::Other {
                 message: "Unmatched CRC32",
             });
+        }
+
+        // EOF marker
+        if raw_length == 0 {
+            self.eof_pos = block_position;
         }
 
         self.cache_order.push(block_position);
