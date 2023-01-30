@@ -1,11 +1,20 @@
 //! bgzip-rs
 //! ========
-//! [![Build Status](https://travis-ci.org/informationsea/bgzip-rs.svg?branch=master)](https://travis-ci.org/informationsea/bgzip-rs)
-//! [![Appveyor](https://ci.appveyor.com/api/projects/status/github/informationsea/bgzip-rs?branch=master&svg=true)](https://ci.appveyor.com/project/informationsea/bgzip-rs)
+//! [![Build](https://github.com/informationsea/bgzip-rs/actions/workflows/build.yml/badge.svg)](https://github.com/informationsea/bgzip-rs/actions/workflows/build.yml)
 //! [![Creates.io](http://meritbadge.herokuapp.com/bgzip)](https://crates.io/crates/bgzip)
 //! [![doc-rs](https://docs.rs/bgzip/badge.svg)](https://docs.rs/bgzip)
 //!
 //! Rust implementation of [BGZF format](https://samtools.github.io/hts-specs/SAMv1.pdf)
+//!
+//! Feature flags
+//! -------------
+//!
+//! * `rayon`: Enable [rayon](https://github.com/rayon-rs/rayon) based multi-threaded writer. This is default feature.
+//! * `rust_backend`: use `miniz_oxide` crate for [flate2](https://github.com/rust-lang/flate2-rs) backend. This is default feature.
+//! * `zlib`: use `zlib` for flate2 backend. Please read [flate2](https://github.com/rust-lang/flate2-rs) description for the detail.
+//! * `zlib-ng`: use `zlib-ng` for flate2 backend. Please read [flate2](https://github.com/rust-lang/flate2-rs) description for the detail.
+//! * `zlib-ng-compat`: Please read [flate2](https://github.com/rust-lang/flate2-rs) description for the detail.
+//! * `cloudflare_zlib`: Please read [flate2](https://github.com/rust-lang/flate2-rs) description for the detail.
 //!
 //! Write Examples
 //! --------
@@ -21,6 +30,8 @@
 //!     Ok(())
 //! }
 //! ```
+//!
+//! Multi-thread support is available via [`BGZFMultiThreadWriter`]. `rayon` flag is required to use this feature.
 //!
 //! Read Examples
 //! --------
@@ -51,10 +62,15 @@ pub mod header;
 mod read;
 /// Tabix file parser. (This module is alpha state.)
 pub mod tabix;
+#[cfg(feature = "rayon")]
+mod thread;
 mod write;
 
 pub use error::BGZFError;
 pub use read::BGZFReader;
+
+#[cfg(feature = "rayon")]
+pub use thread::BGZFMultiThreadWriter;
 pub use write::BGZFWriter;
 
 pub use flate2::Compression;

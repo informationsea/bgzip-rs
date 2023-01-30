@@ -1,6 +1,5 @@
 use crate::header;
-use flate2::write::DeflateEncoder;
-use flate2::Crc;
+use flate2::{Compress, Crc};
 use std::convert::TryInto;
 use std::io::{self, Write};
 
@@ -9,57 +8,46 @@ pub struct BGZFWriter<W: io::Write> {
     writer: W,
     buffer: Vec<u8>,
     compressed_buffer: Vec<u8>,
+    compress: Compress,
     compress_block_unit: usize,
-    level: flate2::Compression,
     closed: bool,
 }
 
 /// Default BGZF block size.
-pub const DEFAULT_COMPRESS_BLOCK_UNIT: usize = 65280;
+pub const DEFAULT_COMPRESS_BLOCK_SIZE: usize = 65280;
+pub const MAXIMUM_COMPRESS_BLOCK_SIZE: usize = 64 * 1024;
+pub(crate) const EXTRA_COMPRESS_BUFFER_SIZE: usize = 500;
 
 impl<W: io::Write> BGZFWriter<W> {
     /// Create new BGZF writer from [`std::io::Write`]
     pub fn new(writer: W, level: flate2::Compression) -> Self {
-        BGZFWriter {
-            writer,
-            buffer: Vec::new(),
-            compressed_buffer: Vec::new(),
-            compress_block_unit: DEFAULT_COMPRESS_BLOCK_UNIT,
-            level,
-            closed: false,
-        }
+        Self::with_block_size(writer, level, DEFAULT_COMPRESS_BLOCK_SIZE)
     }
 
     /// Cerate new BGZF writer with block size.
     pub fn with_block_size(writer: W, level: flate2::Compression, block_size: usize) -> Self {
+        let mut compressed_buffer = Vec::new();
+        compressed_buffer.reserve(block_size + EXTRA_COMPRESS_BUFFER_SIZE);
         BGZFWriter {
             writer,
             buffer: Vec::new(),
-            compressed_buffer: Vec::new(),
+            compressed_buffer,
             compress_block_unit: block_size,
-            level,
+            compress: Compress::new(level, false),
             closed: false,
         }
     }
 
     fn write_block(&mut self) -> io::Result<()> {
-        self.compressed_buffer.clear();
         let uncompressed_block_size = self.compress_block_unit.min(self.buffer.len());
-        let mut encoder = DeflateEncoder::new(&mut self.compressed_buffer, self.level);
-        encoder.write_all(&self.buffer[..uncompressed_block_size])?;
-        encoder.finish()?;
+        write_block(
+            &mut self.writer,
+            &self.buffer[..uncompressed_block_size],
+            &mut self.compressed_buffer,
+            &mut self.compress,
+        )?;
 
-        let mut crc = Crc::new();
-        crc.update(&self.buffer[..uncompressed_block_size]);
-
-        let header =
-            header::BGZFHeader::new(true, 0, self.compressed_buffer.len().try_into().unwrap());
-        header.write(&mut self.writer)?;
-        self.writer.write_all(&self.compressed_buffer)?;
         self.buffer.drain(..uncompressed_block_size);
-        self.writer.write_all(&crc.sum().to_le_bytes())?;
-        self.writer
-            .write_all(&(uncompressed_block_size as u32).to_le_bytes())?;
 
         Ok(())
     }
@@ -94,7 +82,7 @@ impl<W: io::Write> io::Write for BGZFWriter<W> {
     }
 }
 
-const FOOTER_BYTES: &[u8] = &[
+pub(crate) const FOOTER_BYTES: &[u8] = &[
     0x1f, 0x8b, 0x08, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x06, 0x00, 0x42, 0x43, 0x02, 0x00,
     0x1b, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
@@ -107,6 +95,41 @@ impl<W: io::Write> Drop for BGZFWriter<W> {
             self.closed = true;
         }
     }
+}
+
+pub fn write_block<W: io::Write>(
+    mut writer: W,
+    data: &[u8],
+    temporary_buffer: &mut Vec<u8>,
+    compress: &mut flate2::Compress,
+) -> io::Result<()> {
+    temporary_buffer.clear();
+    compress.reset();
+    let status = compress
+        .compress_vec(data, temporary_buffer, flate2::FlushCompress::Finish)
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                e.message().unwrap_or("Compression Error").to_string(),
+            )
+        })?;
+
+    if status != flate2::Status::StreamEnd {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Compression stream is not closed",
+        ));
+    }
+
+    let mut crc = Crc::new();
+    crc.update(data);
+
+    let header = header::BGZFHeader::new(true, 0, temporary_buffer.len().try_into().unwrap());
+    header.write(&mut writer)?;
+    writer.write_all(&temporary_buffer)?;
+    writer.write_all(&crc.sum().to_le_bytes())?;
+    writer.write_all(&(data.len() as u32).to_le_bytes())?;
+    Ok(())
 }
 
 #[cfg(test)]

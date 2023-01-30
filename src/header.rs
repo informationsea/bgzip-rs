@@ -39,7 +39,7 @@ impl ExtraField {
         self.data.len() as u16 + 4
     }
 
-    pub fn write(&self, writer: &mut impl io::Write) -> io::Result<()> {
+    pub fn write<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
         writer.write_all(&[self.sub_field_id1, self.sub_field_id2])?;
         writer.write_all(&(self.data.len() as u16).to_le_bytes())?;
         writer.write_all(&self.data)?;
@@ -232,7 +232,7 @@ impl BGZFHeader {
         })
     }
 
-    pub fn write(&self, writer: &mut impl io::Write) -> io::Result<()> {
+    pub fn write<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
         let mut calculated_flags = self.flags & FLAG_FTEXT;
         if self.file_name.is_some() {
             calculated_flags |= FLAG_FNAME;
@@ -270,7 +270,7 @@ impl BGZFHeader {
             writer.write_all(&extra_field_len.to_le_bytes())?;
 
             for extra in self.extra_field.iter() {
-                extra.write(writer)?;
+                extra.write(&mut writer)?;
             }
         }
         if let Some(file_name) = self.file_name.as_ref() {

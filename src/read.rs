@@ -1,5 +1,5 @@
 use crate::header::BGZFHeader;
-use crate::write::DEFAULT_COMPRESS_BLOCK_UNIT;
+use crate::write::DEFAULT_COMPRESS_BLOCK_SIZE;
 use crate::*;
 use std::collections::HashMap;
 use std::io;
@@ -87,7 +87,7 @@ impl<R: Read + Seek> BGZFReader<R> {
             }
             Err(e) => return Err(e),
         };
-        let mut buffer: Vec<u8> = Vec::with_capacity(DEFAULT_COMPRESS_BLOCK_UNIT);
+        let mut buffer: Vec<u8> = Vec::with_capacity(DEFAULT_COMPRESS_BLOCK_SIZE);
         let loaded_crc32 = {
             let mut inflate =
                 flate2::CrcReader::new(flate2::bufread::DeflateDecoder::new(&mut self.reader));
