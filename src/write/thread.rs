@@ -154,7 +154,7 @@ impl<W: Write> BGZFMultiThreadWriter<W> {
 
     pub fn close(mut self) -> Result<()> {
         self.flush()?;
-        self.writer.write_all(crate::write::FOOTER_BYTES)?;
+        self.writer.write_all(crate::write::EOF_MARKER)?;
         Ok(())
     }
 }
@@ -200,7 +200,7 @@ impl<W: Write> Drop for BGZFMultiThreadWriter<W> {
     fn drop(&mut self) {
         self.flush().expect("BGZF: Flash Error");
         self.writer
-            .write_all(crate::write::FOOTER_BYTES)
+            .write_all(crate::write::EOF_MARKER)
             .expect("BGZF: Cannot write EOF marker");
     }
 }

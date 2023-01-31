@@ -32,7 +32,7 @@
 //! }
 //! ```
 //!
-//! Multi-thread support is available via [`BGZFMultiThreadWriter`]. `rayon` flag is required to use this feature.
+//! Multi-thread support is available via [`write::BGZFMultiThreadWriter`]. `rayon` flag is required to use this feature.
 //!
 //! Read Examples
 //! --------
@@ -60,21 +60,15 @@ mod error;
 pub(crate) mod csi;
 /// BGZ header parser
 pub mod header;
-mod read;
+pub mod read;
 /// Tabix file parser. (This module is alpha state.)
 pub mod tabix;
-#[cfg(feature = "rayon")]
-mod thread;
-mod write;
+pub mod write;
 
 pub use error::BGZFError;
-pub use read::BGZFReader;
-
-#[cfg(feature = "rayon")]
-pub use thread::BGZFMultiThreadWriter;
-pub use write::BGZFWriter;
-
 pub use flate2::Compression;
+pub use read::BGZFReader;
+pub use write::BGZFWriter;
 
 use std::io;
 

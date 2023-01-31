@@ -1,3 +1,11 @@
+//! BGZF writer
+
+#[cfg(feature = "rayon")]
+mod thread;
+
+#[cfg(feature = "rayon")]
+pub use thread::BGZFMultiThreadWriter;
+
 use crate::header;
 use flate2::{Compress, Crc};
 use std::convert::TryInto;
@@ -13,9 +21,12 @@ pub struct BGZFWriter<W: io::Write> {
     closed: bool,
 }
 
-/// Default BGZF block size.
+/// Default BGZF compress unit size
 pub const DEFAULT_COMPRESS_UNIT_SIZE: usize = 65280;
+
+/// Maximum BGZF compress unit size
 pub const MAXIMUM_COMPRESS_UNIT_SIZE: usize = 64 * 1024;
+
 pub(crate) const EXTRA_COMPRESS_BUFFER_SIZE: usize = 500;
 
 impl<W: io::Write> BGZFWriter<W> {
@@ -24,7 +35,7 @@ impl<W: io::Write> BGZFWriter<W> {
         Self::with_compress_unit_size(writer, level, DEFAULT_COMPRESS_UNIT_SIZE)
     }
 
-    /// Cerate new BGZF writer with block size.
+    /// Cerate new BGZF writer with compress unit size.
     pub fn with_compress_unit_size(
         writer: W,
         level: flate2::Compression,
@@ -63,7 +74,7 @@ impl<W: io::Write> BGZFWriter<W> {
     pub fn close(mut self) -> io::Result<()> {
         if !self.closed {
             self.flush()?;
-            self.writer.write_all(FOOTER_BYTES)?;
+            self.writer.write_all(EOF_MARKER)?;
             self.closed = true;
         }
         Ok(())
@@ -86,7 +97,10 @@ impl<W: io::Write> io::Write for BGZFWriter<W> {
     }
 }
 
-pub(crate) const FOOTER_BYTES: &[u8] = &[
+/// End-of-file maker.
+///
+/// This marker should be written at end of the BGZF files.
+pub const EOF_MARKER: &[u8] = &[
     0x1f, 0x8b, 0x08, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x06, 0x00, 0x42, 0x43, 0x02, 0x00,
     0x1b, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
@@ -95,12 +109,17 @@ impl<W: io::Write> Drop for BGZFWriter<W> {
     fn drop(&mut self) {
         if !self.closed {
             self.flush().unwrap();
-            self.writer.write_all(FOOTER_BYTES).unwrap();
+            self.writer.write_all(EOF_MARKER).unwrap();
             self.closed = true;
         }
     }
 }
 
+/// Write single BGZF block to writer.
+///
+/// This function is useful when writing your own parallelized BGZF writer.
+/// `temporary_buffer` and `compress` will be cleared before using them.
+/// `temporary_buffer` must be reserved enough size to store compressed data.
 pub fn write_block<W: io::Write>(
     mut writer: W,
     data: &[u8],

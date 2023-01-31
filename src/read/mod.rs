@@ -1,9 +1,11 @@
+//! BGZF reader
+
 use crate::header::BGZFHeader;
 use crate::write::DEFAULT_COMPRESS_UNIT_SIZE;
 use crate::*;
 use std::collections::HashMap;
-use std::io;
 use std::io::prelude::*;
+use std::io::{self, BufReader};
 
 struct BGZFCache {
     position: u64,
@@ -21,8 +23,8 @@ impl BGZFCache {
 /// A BGZF reader
 ///
 /// Decode BGZF file with seek support.
-pub struct BGZFReader<R: Read + Seek> {
-    reader: io::BufReader<R>,
+pub struct BGZFReader<R: BufRead + Seek> {
+    reader: R,
     cache: HashMap<u64, BGZFCache>,
     cache_order: Vec<u64>,
     cache_limit: usize,
@@ -33,14 +35,16 @@ pub struct BGZFReader<R: Read + Seek> {
 
 const DEFAULT_CACHE_LIMIT: usize = 10;
 
-impl<R: Read + Seek> BGZFReader<R> {
-    /// Create a new BGZF reader from std::io::Read
+impl<R: Read + Seek> BGZFReader<BufReader<R>> {
+    /// Create a new BGZF reader from [`std::io::Read`]
     pub fn new(reader: R) -> Self {
         BGZFReader::with_buf_reader(io::BufReader::new(reader))
     }
+}
 
-    /// Create a new BGZF reader from std::io::BufReader    
-    pub fn with_buf_reader(reader: io::BufReader<R>) -> Self {
+impl<R: BufRead + Seek> BGZFReader<R> {
+    /// Create a new BGZF reader from [`std::io::BufRead`]
+    pub fn with_buf_reader(reader: R) -> Self {
         BGZFReader {
             reader,
             cache: HashMap::new(),
@@ -134,7 +138,7 @@ impl<R: Read + Seek> BGZFReader<R> {
     }
 }
 
-impl<R: Read + Seek> BufRead for BGZFReader<R> {
+impl<R: BufRead + Seek> BufRead for BGZFReader<R> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         if !self.cache.contains_key(&self.current_block) {
             self.load_cache(self.current_block)
@@ -168,7 +172,7 @@ impl<R: Read + Seek> BufRead for BGZFReader<R> {
     }
 }
 
-impl<R: Read + Seek> Read for BGZFReader<R> {
+impl<R: BufRead + Seek> Read for BGZFReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if !self.cache.contains_key(&self.current_block) {
             self.load_cache(self.current_block)
