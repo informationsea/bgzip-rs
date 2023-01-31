@@ -120,6 +120,7 @@ impl<W: io::Write> Drop for BGZFWriter<W> {
 /// This function is useful when writing your own parallelized BGZF writer.
 /// `temporary_buffer` and `compress` will be cleared before using them.
 /// `temporary_buffer` must be reserved enough size to store compressed data.
+/// `compress` must be initialized without zlib_header flag.
 pub fn write_block<W: io::Write>(
     mut writer: W,
     data: &[u8],
@@ -218,7 +219,7 @@ mod test {
             assert_eq!(header.file_name, None);
             assert_eq!(header.modified_time, 0);
             let block_size = header.block_size()?;
-            let compressed_data_len = block_size as i64 - 19 - 6;
+            let compressed_data_len = block_size as i64 - 20 - 6;
             let mut compressed_data = vec![0u8; compressed_data_len as usize];
             result_reader.read_exact(&mut compressed_data)?;
             let crc32 = result_reader.read_le_u32()?;

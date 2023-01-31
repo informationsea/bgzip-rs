@@ -126,7 +126,7 @@ impl BGZFHeader {
             .map(|x| {
                 let mut bytes: [u8; 2] = [0, 0];
                 bytes.copy_from_slice(&x.data[0..2]);
-                u16::from_le_bytes(bytes)
+                u16::from_le_bytes(bytes) + 1
             })
             .ok_or(BGZFError::NotBGZF)
     }
@@ -295,7 +295,8 @@ impl BGZFHeader {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::fs::File;
+    use std::io::prelude::*;
+    use std::{fs::File, io::SeekFrom};
 
     #[test]
     fn load_header() -> Result<(), BGZFError> {
@@ -307,9 +308,17 @@ mod test {
         assert_eq!(header.flags, 4);
         assert_eq!(header.extra_field_len, Some(6));
         assert_eq!(header.extra_field[0].data.len(), 2);
+        let pos = reader.seek(SeekFrom::Current(0))?;
         let mut buf: Vec<u8> = Vec::new();
         header.write(&mut buf)?;
         assert_eq!(buf.len(), header.header_size() as usize);
+        assert_eq!(header.header_size(), pos);
+
+        let mut actual_header = vec![0u8; buf.len()];
+        reader.seek(SeekFrom::Start(0))?;
+        reader.read_exact(&mut actual_header)?;
+        assert_eq!(buf, actual_header);
+
         Ok(())
     }
 
@@ -327,9 +336,18 @@ mod test {
             header.file_name,
             Some(b"common_all_20180418_half.vcf.nobgzip\0".to_vec())
         );
+
+        let pos = reader.seek(SeekFrom::Current(0))?;
         let mut buf: Vec<u8> = Vec::new();
         header.write(&mut buf)?;
         assert_eq!(buf.len(), header.header_size() as usize);
+        assert_eq!(header.header_size(), pos);
+
+        let mut actual_header = vec![0u8; buf.len()];
+        reader.seek(SeekFrom::Start(0))?;
+        reader.read_exact(&mut actual_header)?;
+        assert_eq!(buf, actual_header);
+
         Ok(())
     }
 }

@@ -1,11 +1,96 @@
 //! BGZF reader
 
+#[cfg(feature = "rayon")]
+mod thread;
+
 use crate::header::BGZFHeader;
 use crate::write::DEFAULT_COMPRESS_UNIT_SIZE;
 use crate::*;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::io::prelude::*;
 use std::io::{self, BufReader};
+
+/// Load single block from reader.
+///
+/// This function is useful when writing your own parallelized BGZF reader.
+/// Loaded buffer can be decompress with [`decompress_block`] function.
+pub fn load_block<R: BufRead>(
+    mut reader: R,
+    buffer: &mut Vec<u8>,
+) -> Result<BGZFHeader, BGZFError> {
+    let header = BGZFHeader::from_reader(&mut reader)?;
+    let block_size: u64 = header.block_size()?.into();
+    buffer.clear();
+    buffer.resize((block_size - header.header_size()).try_into().unwrap(), 0);
+    reader.read_exact(buffer)?;
+
+    Ok(header)
+}
+
+/// Decompress single BGZF block from buffer. The buffer should be loaded with [`load_block`] function.
+///
+/// This function is useful when writing your own parallelized BGZF reader.
+/// `uncompressed_data`, `decompress` and `crc` will be cleared before using them.
+/// `uncompressed_data` must be reserved enough size to store uncompressed data.
+pub fn decompress_block(
+    decompressed_data: &mut Vec<u8>,
+    compressed_block: &[u8],
+    decompress: &mut flate2::Decompress,
+    crc: &mut flate2::Crc,
+) -> Result<(), BGZFError> {
+    let deflate_data = &compressed_block[0..(compressed_block.len() - 8)];
+    decompressed_data.clear();
+    decompress.reset(false);
+    crc.reset();
+    match decompress.decompress_vec(
+        deflate_data,
+        decompressed_data,
+        flate2::FlushDecompress::Finish,
+    ) {
+        Ok(flate2::Status::StreamEnd) => (),
+        Ok(_) => {
+            return Err(BGZFError::Other {
+                message: "deflate stream is not finished",
+            })
+        }
+        Err(_e) => {
+            return Err(BGZFError::Other {
+                message: "Unknown inflate error",
+            })
+        }
+    }
+
+    let expected_crc_data = [
+        compressed_block[(compressed_block.len() - 8)],
+        compressed_block[(compressed_block.len() - 7)],
+        compressed_block[(compressed_block.len() - 6)],
+        compressed_block[(compressed_block.len() - 5)],
+    ];
+    let expected_len_data = [
+        compressed_block[(compressed_block.len() - 4)],
+        compressed_block[(compressed_block.len() - 3)],
+        compressed_block[(compressed_block.len() - 2)],
+        compressed_block[(compressed_block.len() - 1)],
+    ];
+
+    let expected_len = u32::from_le_bytes(expected_len_data);
+    if expected_len != decompressed_data.len().try_into().unwrap() {
+        return Err(BGZFError::Other {
+            message: "unmatched length of decompressed data",
+        });
+    }
+
+    let expected_crc = u32::from_le_bytes(expected_crc_data);
+    crc.update(&decompressed_data);
+    if expected_crc != crc.sum() {
+        return Err(BGZFError::Other {
+            message: "unmatched CRC32 of decompressed data",
+        });
+    }
+
+    Ok(())
+}
 
 struct BGZFCache {
     position: u64,
@@ -16,7 +101,7 @@ struct BGZFCache {
 impl BGZFCache {
     fn next_block_position(&self) -> u64 {
         let block_size: u64 = self.header.block_size().unwrap().into();
-        self.position + block_size + 1
+        self.position + block_size
     }
 }
 
@@ -211,8 +296,56 @@ impl<R: BufRead + Seek> Read for BGZFReader<R> {
 
 #[cfg(test)]
 mod test {
+    use flate2::Crc;
+
     use super::*;
     use std::fs::File;
+
+    #[test]
+    fn test_load_block() -> Result<(), BGZFError> {
+        let mut crc = Crc::new();
+        let mut expected_reader = io::BufReader::new(flate2::read::MultiGzDecoder::new(
+            File::open("testfiles/common_all_20180418_half.vcf.gz")?,
+        ));
+        let mut buf = [0u8; 1024 * 100];
+        loop {
+            let read_bytes = expected_reader.read(&mut buf[..])?;
+            if read_bytes == 0 {
+                break;
+            }
+            crc.update(&buf[0..read_bytes]);
+        }
+        let original_crc = crc.sum();
+
+        let mut reader =
+            io::BufReader::new(File::open("testfiles/common_all_20180418_half.vcf.gz")?);
+
+        let mut block_data = Vec::new();
+        let mut decompress = flate2::Decompress::new(false);
+        let mut data_crc = flate2::Crc::new();
+        let mut decompressed_data = Vec::with_capacity(crate::write::MAXIMUM_COMPRESS_UNIT_SIZE);
+
+        loop {
+            load_block(&mut reader, &mut block_data)?;
+            if block_data == &[3, 0, 0, 0, 0, 0, 0, 0, 0, 0] {
+                break;
+            }
+
+            decompress_block(
+                &mut decompressed_data,
+                &block_data,
+                &mut decompress,
+                &mut crc,
+            )?;
+
+            data_crc.update(&decompressed_data);
+        }
+
+        assert_eq!(original_crc, data_crc.sum());
+
+        Ok(())
+    }
+
     #[test]
     fn test_read() -> Result<(), BGZFError> {
         let mut expected_reader = io::BufReader::new(flate2::read::MultiGzDecoder::new(
