@@ -26,6 +26,7 @@ struct Args {
     stdout: bool,
     #[arg(short = 'l', long = "compress-level")]
     compress_level: Option<u32>,
+    #[cfg(feature = "rayon")]
     #[arg(short = 't', long = "thread", default_value = "1")]
     thread: usize,
     #[command()]
@@ -43,6 +44,7 @@ fn main() -> anyhow::Result<()> {
         Compression::default()
     };
 
+    #[cfg(feature = "rayon")]
     rayon::ThreadPoolBuilder::new()
         .num_threads(matches.thread)
         .build_global()?;
@@ -100,6 +102,7 @@ fn main() -> anyhow::Result<()> {
             (Mode::Compress, Box::new(stdout.lock()))
         };
 
+        #[cfg(feature = "rayon")]
         match mode {
             Mode::Decompress => {
                 //println!("decompress");
