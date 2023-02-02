@@ -1,4 +1,4 @@
-use bgzip::read::{BGZFMultiThreadReader, BGZFReader};
+use bgzip::read::BGZFReader;
 use clap::Parser;
 use std::fs::File;
 use std::io::prelude::*;
@@ -24,13 +24,13 @@ fn main() -> anyhow::Result<()> {
         rayon::ThreadPoolBuilder::new()
             .num_threads(thread)
             .build_global()?;
-        Box::new(BGZFMultiThreadReader::new(file_reader))
+        Box::new(bgzip::read::BGZFMultiThreadReader::new(file_reader))
     } else {
         Box::new(BGZFReader::new(file_reader))
     };
 
     #[cfg(not(feature = "rayon"))]
-    let mut writer = BGZFReader::new(file_writer);
+    let mut reader = BGZFReader::new(file_reader);
 
     std::io::copy(&mut reader, &mut file_writer)?;
 

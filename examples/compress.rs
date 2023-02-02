@@ -1,4 +1,4 @@
-use bgzip::write::{BGZFMultiThreadWriter, BGZFWriter};
+use bgzip::write::BGZFWriter;
 use clap::Parser;
 use std::fs::File;
 use std::io::prelude::*;
@@ -28,7 +28,10 @@ fn main() -> anyhow::Result<()> {
         rayon::ThreadPoolBuilder::new()
             .num_threads(thread)
             .build_global()?;
-        Box::new(BGZFMultiThreadWriter::new(file_writer, level)?)
+        Box::new(bgzip::write::BGZFMultiThreadWriter::new(
+            file_writer,
+            level,
+        )?)
     } else {
         Box::new(BGZFWriter::new(file_writer, level))
     };
