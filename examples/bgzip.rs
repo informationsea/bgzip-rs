@@ -16,7 +16,7 @@ enum Mode {
 struct Args {
     #[arg(short, long, conflicts_with = "compress")]
     decompress: bool,
-    #[arg(short, long, conflicts_with = "decompress")]
+    #[arg(long, conflicts_with = "decompress")]
     compress: bool,
     #[arg(short, long)]
     keep: bool,
