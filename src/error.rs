@@ -18,3 +18,12 @@ pub enum BGZFError {
     #[error("Error: {message:}")]
     Other { message: &'static str },
 }
+
+impl Into<std::io::Error> for BGZFError {
+    fn into(self) -> std::io::Error {
+        match self {
+            BGZFError::IoError(e) => e,
+            other => std::io::Error::new(std::io::ErrorKind::Other, other),
+        }
+    }
+}

@@ -3,6 +3,9 @@
 #[cfg(feature = "rayon")]
 mod thread;
 
+#[cfg(feature = "rayon")]
+pub use thread::BGZFMultiThreadReader;
+
 use crate::header::BGZFHeader;
 use crate::write::DEFAULT_COMPRESS_UNIT_SIZE;
 use crate::*;
