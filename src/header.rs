@@ -1,4 +1,5 @@
 use crate::*;
+use std::convert::TryInto;
 use std::io;
 use std::u32;
 
@@ -131,6 +132,16 @@ impl BGZFHeader {
             .ok_or(BGZFError::NotBGZF)
     }
 
+    pub fn update_block_size(&mut self, new_block_size: u16) -> Result<(), BGZFError> {
+        self.extra_field
+            .iter_mut()
+            .find(|x| x.sub_field_id1 == 66 && x.sub_field_id2 == 67 && x.data.len() == 2)
+            .map(|x| {
+                x.data.copy_from_slice(&(new_block_size - 1).to_le_bytes());
+            })
+            .ok_or(BGZFError::NotBGZF)
+    }
+
     pub fn header_size(&self) -> u64 {
         10u64
             + self.extra_field_len.map(|x| (x + 2).into()).unwrap_or(0)
@@ -147,35 +158,40 @@ impl BGZFHeader {
             + self.crc16.map(|_| 2).unwrap_or(0)
     }
 
-    pub fn from_reader<R: io::BufRead>(reader: &mut R) -> Result<Self, BGZFError> {
-        let id1 = reader.read_le_u8()?;
-        let id2 = reader.read_le_u8()?;
+    pub fn from_reader<R: io::Read>(reader: &mut R) -> Result<Self, BGZFError> {
+        let mut header_data = [0u8; 10];
+        reader.read_exact(&mut header_data)?;
+
+        let id1 = header_data[0];
+        let id2 = header_data[1];
         if id1 != GZIP_ID1 || id2 != GZIP_ID2 {
             return Err(BGZFError::NotGzip);
         }
-        let compression_method = reader.read_le_u8()?;
+        let compression_method = header_data[2];
         if compression_method != DEFLATE {
             return Err(BGZFError::Other {
                 message: "Unsupported compression method",
             });
         }
-        let flags = reader.read_le_u8()?;
+        let flags = header_data[3];
         if flags | 0x1f != 0x1f {
             return Err(BGZFError::Other {
                 message: "Unsupported flag",
             });
         }
-        let modified_time = reader.read_le_u32()?;
-        let extra_flags = reader.read_le_u8()?;
-        let operation_system = reader.read_le_u8()?;
+        let modified_time = u32::from_le_bytes(header_data[4..8].try_into().unwrap());
+        let extra_flags = header_data[8];
+        let operation_system = header_data[9];
         let (extra_field_len, extra_field) = if flags & FLAG_FEXTRA != 0 {
             let len = reader.read_le_u16()?;
             let mut remain_bytes = len;
             let mut fields = Vec::new();
             while remain_bytes > 4 {
-                let sub_field_id1 = reader.read_le_u8()?;
-                let sub_field_id2 = reader.read_le_u8()?;
-                let sub_field_len = reader.read_le_u16()?;
+                let mut buf = [0u8; 4];
+                reader.read_exact(&mut buf)?;
+                let sub_field_id1 = buf[0];
+                let sub_field_id2 = buf[1];
+                let sub_field_len = u16::from_le_bytes([buf[2], buf[3]]);
                 let mut buf: Vec<u8> = vec![0; sub_field_len as usize];
                 reader.read_exact(&mut buf)?;
                 fields.push(ExtraField {
@@ -302,7 +318,7 @@ mod test {
     fn load_header() -> Result<(), BGZFError> {
         let mut reader =
             io::BufReader::new(File::open("testfiles/common_all_20180418_half.vcf.gz")?);
-        let header = BGZFHeader::from_reader(&mut reader)?;
+        let mut header = BGZFHeader::from_reader(&mut reader)?;
         assert_eq!(header.operation_system, FILESYSTEM_UNKNOWN);
         assert_eq!(header.compression_method, 8);
         assert_eq!(header.flags, 4);
@@ -317,6 +333,11 @@ mod test {
         let mut actual_header = vec![0u8; buf.len()];
         reader.seek(SeekFrom::Start(0))?;
         reader.read_exact(&mut actual_header)?;
+        assert_eq!(buf, actual_header);
+
+        let mut buf: Vec<u8> = Vec::new();
+        header.update_block_size(header.block_size()?)?;
+        header.write(&mut buf)?;
         assert_eq!(buf, actual_header);
 
         Ok(())

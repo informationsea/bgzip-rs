@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, Read};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
+use crate::deflate::*;
 use crate::BGZFError;
 
 const EOF_BLOCK: [u8; 10] = [3, 0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -10,18 +11,18 @@ struct ReadBlock {
     index: u64,
     decompressed_data: Vec<u8>,
     compressed_data: Vec<u8>,
-    decompress: flate2::Decompress,
-    crc: flate2::Crc,
+    decompress: Decompress,
 }
 
 impl Default for ReadBlock {
     fn default() -> Self {
+        let decompress = Decompress::new();
+
         ReadBlock {
             index: 0,
             decompressed_data: Vec::with_capacity(crate::write::MAXIMUM_COMPRESS_UNIT_SIZE),
             compressed_data: Vec::with_capacity(crate::write::MAXIMUM_COMPRESS_UNIT_SIZE),
-            decompress: flate2::Decompress::new(false),
-            crc: flate2::Crc::new(),
+            decompress,
         }
     }
 }
@@ -51,7 +52,7 @@ impl<R: BufRead> BGZFMultiThreadReader<R> {
         let (tx, rx) = channel();
         BGZFMultiThreadReader {
             reader,
-            block_list: (0..rayon::current_num_threads())
+            block_list: (0..(rayon::current_num_threads() * 2))
                 .map(|_| ReadBlock::default())
                 .collect(),
             current_read_pos: 0,
@@ -125,7 +126,6 @@ impl<R: BufRead> BufRead for BGZFMultiThreadReader<R> {
                     &mut block.decompressed_data,
                     &block.compressed_data,
                     &mut block.decompress,
-                    &mut block.crc,
                 ) {
                     Ok(_) => sender.send(Ok(block)).expect("reader send error 1"),
                     Err(e) => {

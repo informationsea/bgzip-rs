@@ -1,6 +1,6 @@
 use bgzip::BGZFError;
+use bgzip::Compression;
 use clap::Parser;
-use flate2::Compression;
 use std::fs;
 use std::io;
 use std::path::Path;

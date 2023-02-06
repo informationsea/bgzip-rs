@@ -26,7 +26,7 @@ fn main() -> anyhow::Result<()> {
             .build_global()?;
         Box::new(bgzip::read::BGZFMultiThreadReader::new(file_reader))
     } else {
-        Box::new(BGZFReader::new(file_reader))
+        Box::new(BGZFReader::new(file_reader)?)
     };
 
     #[cfg(not(feature = "rayon"))]

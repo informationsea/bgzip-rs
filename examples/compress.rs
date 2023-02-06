@@ -21,7 +21,7 @@ fn main() -> anyhow::Result<()> {
     let mut file_reader = File::open(&cli.input_file)?;
     let file_writer = File::create(&cli.output)?;
 
-    let level = flate2::Compression::new(cli.compress_level);
+    let level = bgzip::Compression::new(cli.compress_level);
 
     #[cfg(feature = "rayon")]
     let mut writer: Box<dyn Write> = if let Some(thread) = cli.thread {

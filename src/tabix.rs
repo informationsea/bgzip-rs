@@ -2,7 +2,7 @@ use crate::*;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::i32;
-use std::io::{self, BufRead, Read, Result};
+use std::io::{self, Read};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TabixChunk {
@@ -11,7 +11,7 @@ pub struct TabixChunk {
 }
 
 impl TabixChunk {
-    fn from_reader<R: Read + BinaryReader>(reader: &mut R) -> Result<Self> {
+    fn from_reader<R: Read + BinaryReader>(reader: &mut R) -> io::Result<Self> {
         let begin = reader.read_le_u64()?;
         let end = reader.read_le_u64()?;
         Ok(TabixChunk { begin, end })
@@ -26,7 +26,7 @@ pub struct TabixBin {
 }
 
 impl TabixBin {
-    fn from_reader<R: Read + BinaryReader>(reader: &mut R) -> Result<Self> {
+    fn from_reader<R: Read + BinaryReader>(reader: &mut R) -> io::Result<Self> {
         let bin = reader.read_le_u32()?;
         let number_of_chunk = reader.read_le_i32()?;
         let mut chunks = Vec::new();
@@ -51,7 +51,7 @@ pub struct TabixSequence {
 }
 
 impl TabixSequence {
-    fn from_reader<R: Read + BinaryReader>(reader: &mut R) -> Result<Self> {
+    fn from_reader<R: Read + BinaryReader>(reader: &mut R) -> io::Result<Self> {
         let number_of_distinct_bin = reader.read_le_i32()?;
         let mut bins = HashMap::new();
         for _ in 0..number_of_distinct_bin {
@@ -89,13 +89,15 @@ pub struct Tabix {
 }
 
 impl Tabix {
-    pub fn from_reader<R: Read>(reader: R) -> Result<Self> {
-        let mut reader = io::BufReader::new(flate2::read::MultiGzDecoder::new(reader));
+    pub fn from_reader<R: Read>(reader: R) -> Result<Self, crate::BGZFError> {
+        let mut reader = io::BufReader::new(crate::read::BGZFReader::new(reader)?);
 
         let mut buf: [u8; 4] = [0, 0, 0, 0];
         reader.read_exact(&mut buf)?;
         if buf != [b'T', b'B', b'I', 1] {
-            return Err(io::Error::new(io::ErrorKind::Other, "Not Tabix format"));
+            return Err(BGZFError::Other {
+                message: "Not Tabix format",
+            });
         }
         let number_of_references = reader.read_le_i32()?;
         let format = reader.read_le_i32()?;
@@ -169,7 +171,7 @@ mod test {
     use std::str;
 
     #[test]
-    fn test_tabix_read() -> Result<()> {
+    fn test_tabix_read() -> anyhow::Result<()> {
         let mut reader = File::open("testfiles/common_all_20180418_half.vcf.gz.tbi")?;
         let tabix = Tabix::from_reader(&mut reader)?;
         //println!("{:?}", tabix);

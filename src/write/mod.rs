@@ -6,15 +6,15 @@ mod thread;
 #[cfg(feature = "rayon")]
 pub use thread::BGZFMultiThreadWriter;
 
-use crate::header;
-use flate2::{Compress, Crc};
+use crate::deflate::*;
+use crate::header::BGZFHeader;
 use std::convert::TryInto;
 use std::io::{self, Write};
 
 /// A BGZF writer
 pub struct BGZFWriter<W: io::Write> {
     writer: W,
-    buffer: Vec<u8>,
+    original_data: Vec<u8>,
     compressed_buffer: Vec<u8>,
     compress: Compress,
     compress_unit_size: usize,
@@ -27,42 +27,38 @@ pub const DEFAULT_COMPRESS_UNIT_SIZE: usize = 65280;
 /// Maximum BGZF compress unit size
 pub const MAXIMUM_COMPRESS_UNIT_SIZE: usize = 64 * 1024;
 
-pub(crate) const EXTRA_COMPRESS_BUFFER_SIZE: usize = 500;
+pub(crate) const EXTRA_COMPRESS_BUFFER_SIZE: usize = 200;
 
 impl<W: io::Write> BGZFWriter<W> {
     /// Create new BGZF writer from [`std::io::Write`]
-    pub fn new(writer: W, level: flate2::Compression) -> Self {
+    pub fn new(writer: W, level: Compression) -> Self {
         Self::with_compress_unit_size(writer, level, DEFAULT_COMPRESS_UNIT_SIZE)
     }
 
     /// Cerate new BGZF writer with compress unit size.
     pub fn with_compress_unit_size(
         writer: W,
-        level: flate2::Compression,
+        level: Compression,
         compress_unit_size: usize,
     ) -> Self {
-        let mut compressed_buffer = Vec::new();
-        compressed_buffer.reserve(compress_unit_size + EXTRA_COMPRESS_BUFFER_SIZE);
         BGZFWriter {
             writer,
-            buffer: Vec::new(),
-            compressed_buffer,
+            original_data: Vec::with_capacity(compress_unit_size),
+            compressed_buffer: Vec::with_capacity(compress_unit_size + EXTRA_COMPRESS_BUFFER_SIZE),
             compress_unit_size,
-            compress: Compress::new(level, false),
+            compress: Compress::new(level),
             closed: false,
         }
     }
 
     fn write_block(&mut self) -> io::Result<()> {
-        let uncompressed_block_size = self.compress_unit_size.min(self.buffer.len());
         write_block(
-            &mut self.writer,
-            &self.buffer[..uncompressed_block_size],
             &mut self.compressed_buffer,
+            &self.original_data,
             &mut self.compress,
-        )?;
-
-        self.buffer.drain(..uncompressed_block_size);
+        )
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        self.writer.write_all(&self.compressed_buffer)?;
 
         Ok(())
     }
@@ -74,7 +70,7 @@ impl<W: io::Write> BGZFWriter<W> {
     pub fn close(mut self) -> io::Result<()> {
         if !self.closed {
             self.flush()?;
-            self.writer.write_all(EOF_MARKER)?;
+            self.writer.write_all(&crate::EOF_MARKER)?;
             self.closed = true;
         }
         Ok(())
@@ -83,37 +79,41 @@ impl<W: io::Write> BGZFWriter<W> {
 
 impl<W: io::Write> io::Write for BGZFWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.buffer.extend_from_slice(buf);
-        while self.compress_unit_size < self.buffer.len() {
+        let mut process_start_pos = 0;
+        loop {
+            let to_write_bytes = (buf.len() - process_start_pos)
+                .min(self.compress_unit_size - self.original_data.len());
+            if to_write_bytes == 0 {
+                break;
+            }
+            self.original_data
+                .extend_from_slice(&buf[process_start_pos..(process_start_pos + to_write_bytes)]);
             self.write_block()?;
+            self.original_data.clear();
+            process_start_pos += to_write_bytes;
         }
+
         Ok(buf.len())
     }
     fn flush(&mut self) -> io::Result<()> {
-        while !self.buffer.is_empty() {
+        while !self.original_data.is_empty() {
             self.write_block()?;
         }
         Ok(())
     }
 }
 
-/// End-of-file maker.
-///
-/// This marker should be written at end of the BGZF files.
-pub const EOF_MARKER: &[u8] = &[
-    0x1f, 0x8b, 0x08, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x06, 0x00, 0x42, 0x43, 0x02, 0x00,
-    0x1b, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-];
-
 impl<W: io::Write> Drop for BGZFWriter<W> {
     fn drop(&mut self) {
         if !self.closed {
             self.flush().unwrap();
-            self.writer.write_all(EOF_MARKER).unwrap();
+            self.writer.write_all(&crate::EOF_MARKER).unwrap();
             self.closed = true;
         }
     }
 }
+
+const FOOTER_SIZE: usize = 8;
 
 /// Write single BGZF block to writer.
 ///
@@ -121,44 +121,42 @@ impl<W: io::Write> Drop for BGZFWriter<W> {
 /// `temporary_buffer` and `compress` will be cleared before using them.
 /// `temporary_buffer` must be reserved enough size to store compressed data.
 /// `compress` must be initialized without zlib_header flag.
-pub fn write_block<W: io::Write>(
-    mut writer: W,
-    data: &[u8],
-    temporary_buffer: &mut Vec<u8>,
-    compress: &mut flate2::Compress,
-) -> io::Result<()> {
-    temporary_buffer.clear();
-    compress.reset();
-    let status = compress
-        .compress_vec(data, temporary_buffer, flate2::FlushCompress::Finish)
-        .map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                e.message().unwrap_or("Compression Error").to_string(),
-            )
-        })?;
+pub fn write_block(
+    compressed_data: &mut Vec<u8>,
+    original_data: &[u8],
+    compress: &mut Compress,
+) -> Result<usize, CompressError> {
+    let mut header = BGZFHeader::new(false, 0, 0);
+    let header_size: usize = header.header_size().try_into().unwrap();
+    compressed_data.resize(
+        original_data.len() + EXTRA_COMPRESS_BUFFER_SIZE + header_size + FOOTER_SIZE,
+        0,
+    );
 
-    if status != flate2::Status::StreamEnd {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "Compression stream is not closed",
-        ));
-    }
+    let compressed_len = compress.compress(original_data, &mut compressed_data[header_size..])?;
+    compressed_data.truncate(header_size + compressed_len);
 
     let mut crc = Crc::new();
-    crc.update(data);
+    crc.update(original_data);
 
-    let header = header::BGZFHeader::new(true, 0, temporary_buffer.len().try_into().unwrap());
-    header.write(&mut writer)?;
-    writer.write_all(&temporary_buffer)?;
-    writer.write_all(&crc.sum().to_le_bytes())?;
-    writer.write_all(&(data.len() as u32).to_le_bytes())?;
-    Ok(())
+    compressed_data.extend_from_slice(&crc.sum().to_le_bytes());
+    compressed_data.extend_from_slice(&(original_data.len() as u32).to_le_bytes());
+
+    let block_size = compressed_data.len();
+    header
+        .update_block_size(block_size.try_into().unwrap())
+        .expect("Unreachable");
+
+    header
+        .write(&mut compressed_data[..header_size])
+        .expect("Failed to write header");
+
+    Ok(block_size)
 }
 
 #[cfg(test)]
 mod test {
-    use crate::{BGZFReader, BinaryReader};
+    use crate::{deflate::Compression, BinaryReader};
 
     use super::*;
     use std::fs::{self, File};
@@ -166,24 +164,35 @@ mod test {
 
     #[test]
     fn test_vcf() -> io::Result<()> {
-        let mut writer = BGZFWriter::new(
-            fs::File::create("target/test.vcf.gz")?,
-            flate2::Compression::default(),
-        );
+        let mut data = Vec::new();
         let mut reader = flate2::read::MultiGzDecoder::new(fs::File::open(
             "testfiles/common_all_20180418_half.vcf.gz",
         )?);
-        io::copy(&mut reader, &mut writer)?;
+        reader.read_to_end(&mut data)?;
+
+        let output_path = "target/test.vcf.gz";
+        let mut writer = BGZFWriter::new(fs::File::create(output_path)?, Compression::default());
+        writer.write_all(&data)?;
+        std::mem::drop(writer);
+
+        let mut reader = flate2::read::MultiGzDecoder::new(fs::File::open(output_path)?);
+        let mut wrote_data = Vec::new();
+        reader.read_to_end(&mut wrote_data)?;
+        assert_eq!(wrote_data.len(), data.len());
+
         Ok(())
     }
 
     #[test]
     fn test_simple() -> io::Result<()> {
-        let mut writer = BGZFWriter::new(
-            fs::File::create("target/simple1.txt.gz")?,
-            flate2::Compression::default(),
-        );
+        let output_path = "target/simple1.txt.gz";
+        let mut writer = BGZFWriter::new(fs::File::create(output_path)?, Compression::default());
         writer.write_all(b"1234")?;
+        std::mem::drop(writer);
+        let mut reader = flate2::read::MultiGzDecoder::new(std::fs::File::open(output_path)?);
+        let mut data = Vec::new();
+        reader.read_to_end(&mut data)?;
+        assert_eq!(data, b"1234");
         Ok(())
     }
 
@@ -191,10 +200,8 @@ mod test {
     fn test_write_bed() -> anyhow::Result<()> {
         const TEST_OUTPUT_PATH: &str = "target/test.bed.gz";
 
-        let mut writer = BGZFWriter::new(
-            fs::File::create(TEST_OUTPUT_PATH)?,
-            flate2::Compression::default(),
-        );
+        let mut writer =
+            BGZFWriter::new(fs::File::create(TEST_OUTPUT_PATH)?, Compression::default());
 
         let mut all_data = Vec::new();
         let mut data_reader =
@@ -206,7 +213,8 @@ mod test {
         std::mem::drop(writer);
 
         let mut result_data = Vec::new();
-        let mut result_reader = BGZFReader::new(BufReader::new(File::open(TEST_OUTPUT_PATH)?));
+        let mut result_reader =
+            flate2::read::MultiGzDecoder::new(BufReader::new(File::open(TEST_OUTPUT_PATH)?));
         result_reader.read_to_end(&mut result_data)?;
         assert_eq!(result_data, all_data);
 
