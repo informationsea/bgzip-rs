@@ -12,11 +12,11 @@ Rust implementation of BGZF
 Write Examples
 --------
 ```rust
-use bgzip::{BGZFWriter, BGZFError};
+use bgzip::{BGZFWriter, BGZFError, Compression};
 use std::io::{self, Write};
 fn main() -> Result<(), BGZFError> {
     let mut write_buffer = Vec::new();
-    let mut writer = BGZFWriter::new(&mut write_buffer, flate2::Compression::default());
+    let mut writer = BGZFWriter::new(&mut write_buffer, Compression::default());
     writer.write_all(b"##fileformat=VCFv4.2\n")?;
     writer.write_all(b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")?;
     writer.close()?;
@@ -32,7 +32,7 @@ use std::io::{self, BufRead};
 use std::fs;
 fn main() -> Result<(), BGZFError> {
     let mut reader =
-    BGZFReader::new(fs::File::open("testfiles/common_all_20180418_half.vcf.gz")?);
+        BGZFReader::new(fs::File::open("testfiles/common_all_20180418_half.vcf.gz")?)?;
     let mut line = String::new();
     reader.read_line(&mut line)?;
     assert_eq!("##fileformat=VCFv4.0\n", line);

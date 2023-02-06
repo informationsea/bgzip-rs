@@ -16,6 +16,7 @@
 //! * `zlib-ng`: use `zlib-ng` for flate2 backend. Please read [flate2](https://github.com/rust-lang/flate2-rs) description for the detail.
 //! * `zlib-ng-compat`: Please read [flate2](https://github.com/rust-lang/flate2-rs) description for the detail.
 //! * `cloudflare_zlib`: Please read [flate2](https://github.com/rust-lang/flate2-rs) description for the detail.
+//! * `libdeflater`: use `libdeflater` instead of `flate2` crate.
 //!
 //! Write Examples
 //! --------

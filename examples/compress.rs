@@ -3,6 +3,7 @@ use clap::Parser;
 use std::fs::File;
 use std::io::prelude::*;
 
+#[cfg(not(feature = "rayon"))]
 #[derive(Debug, Clone, Parser, PartialEq)]
 struct Cli {
     #[command()]
@@ -11,7 +12,17 @@ struct Cli {
     output: String,
     #[arg(short, long)]
     compress_level: u32,
-    #[cfg(feature = "rayon")]
+}
+
+#[cfg(feature = "rayon")]
+#[derive(Debug, Clone, Parser, PartialEq)]
+struct Cli {
+    #[command()]
+    input_file: String,
+    #[arg(short, long)]
+    output: String,
+    #[arg(short, long)]
+    compress_level: u32,
     #[arg(short = '@', long)]
     thread: Option<usize>,
 }

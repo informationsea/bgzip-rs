@@ -95,3 +95,15 @@ jobs:
         with:
           command: test
           args: --no-default-features --features rayon,zlib-ng --release --target ${{ matrix.config.target }}
+      - name: Test with libdeflate
+        if: ${{ matrix.config.test }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features --features libdeflater --release --target ${{ matrix.config.target }}
+      - name: Test with libdeflate and rayon
+        if: ${{ matrix.config.test }}
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --no-default-features --features rayon,libdeflater --release --target ${{ matrix.config.target }}

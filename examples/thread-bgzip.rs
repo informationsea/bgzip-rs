@@ -11,6 +11,7 @@ enum Mode {
     Decompress,
 }
 
+#[cfg(not(feature = "rayon"))]
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about)]
 struct Args {
@@ -26,11 +27,30 @@ struct Args {
     stdout: bool,
     #[arg(short = 'l', long = "compress-level")]
     compress_level: Option<u32>,
-    #[cfg(feature = "rayon")]
-    #[arg(short = 't', long = "thread", default_value = "1")]
-    thread: usize,
     #[command()]
     files: Option<Vec<String>>,
+}
+
+#[cfg(feature = "rayon")]
+#[derive(Debug, Parser)]
+#[command(author, version, about, long_about)]
+struct Args {
+    #[arg(short, long, conflicts_with = "compress")]
+    decompress: bool,
+    #[arg(long, conflicts_with = "decompress")]
+    compress: bool,
+    #[arg(short, long)]
+    keep: bool,
+    #[arg(short, long)]
+    force: bool,
+    #[arg(short = 'c', long)]
+    stdout: bool,
+    #[arg(short = 'l', long = "compress-level")]
+    compress_level: Option<u32>,
+    #[command()]
+    files: Option<Vec<String>>,
+    #[arg(short = 't', long = "thread", default_value = "1")]
+    thread: usize,
 }
 
 fn main() -> anyhow::Result<()> {

@@ -13,7 +13,7 @@ categories = ["compression"]
 exclude = ["testfiles", "tmp"]
 
 [features]
-default = ["rust_backend",  "log", "rayon"]
+default = ["rust_backend", "log"]
 flate2 = ["dep:flate2"]
 rust_backend = ["flate2/rust_backend", "flate2"]
 zlib = ["flate2/zlib", "flate2"]

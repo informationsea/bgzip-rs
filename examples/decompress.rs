@@ -3,13 +3,22 @@ use clap::Parser;
 use std::fs::File;
 use std::io::prelude::*;
 
-#[derive(Debug, Clone, Parser, PartialEq)]
+#[cfg(not(feature = "rayon"))]
+#[derive(Debug, Parser)]
 struct Cli {
     #[command()]
     input_file: String,
     #[arg(short, long)]
     output: String,
-    #[cfg(feature = "rayon")]
+}
+
+#[cfg(feature = "rayon")]
+#[derive(Debug, Parser)]
+struct Cli {
+    #[command()]
+    input_file: String,
+    #[arg(short, long)]
+    output: String,
     #[arg(short = '@', long)]
     thread: Option<usize>,
 }
@@ -30,7 +39,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     #[cfg(not(feature = "rayon"))]
-    let mut reader = BGZFReader::new(file_reader);
+    let mut reader = BGZFReader::new(file_reader)?;
 
     std::io::copy(&mut reader, &mut file_writer)?;
 
