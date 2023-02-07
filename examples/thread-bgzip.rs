@@ -126,7 +126,7 @@ fn main() -> anyhow::Result<()> {
         match mode {
             Mode::Decompress => {
                 //println!("decompress");
-                let mut reader = bgzip::read::BGZFMultiThreadReader::with_buf_reader(input);
+                let mut reader = bgzip::read::BGZFMultiThreadReader::new(input);
                 io::copy(&mut reader, &mut output)?;
             }
             Mode::Compress => {

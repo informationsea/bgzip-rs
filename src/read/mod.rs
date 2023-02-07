@@ -35,7 +35,7 @@ pub fn decompress_block(
     compressed_block: &[u8],
     decompress: &mut Decompress,
 ) -> Result<(), BGZFError> {
-    decompressed_data.clear();
+    let original_decompress_data_len = decompressed_data.len();
     let mut crc = Crc::new();
 
     let expected_len_data = [
@@ -44,10 +44,13 @@ pub fn decompress_block(
         compressed_block[(compressed_block.len() - 2)],
         compressed_block[(compressed_block.len() - 1)],
     ];
-    let expected_len = u32::from_le_bytes(expected_len_data);
-    decompressed_data.resize(expected_len.try_into().unwrap(), 0);
+    let expected_len: usize = u32::from_le_bytes(expected_len_data).try_into().unwrap();
+    decompressed_data.resize(original_decompress_data_len + expected_len, 0);
 
-    decompress.decompress(compressed_block, decompressed_data)?;
+    decompress.decompress(
+        compressed_block,
+        &mut decompressed_data[original_decompress_data_len..],
+    )?;
 
     let expected_crc_data = [
         compressed_block[(compressed_block.len() - 8)],
@@ -57,7 +60,7 @@ pub fn decompress_block(
     ];
 
     let expected_crc = u32::from_le_bytes(expected_crc_data);
-    crc.update(&decompressed_data);
+    crc.update(&decompressed_data[original_decompress_data_len..]);
     if expected_crc != crc.sum() {
         return Err(BGZFError::Other {
             message: "unmatched CRC32 of decompressed data",
@@ -128,7 +131,8 @@ impl<R: Read> BGZFReader<R> {
         }
 
         self.compressed_buffer.clear();
-        load_block(&mut self.reader, &mut self.compressed_buffer)?;
+        let header = load_block(&mut self.reader, &mut self.compressed_buffer)?;
+        let header_size = header.header_size();
         if self.compressed_buffer == crate::EOF_MARKER {
             self.eof_pos = self.next_block;
             self.current_buffer.clear();
@@ -145,7 +149,7 @@ impl<R: Read> BGZFReader<R> {
         )?;
         self.current_block = self.next_block;
         let current_block_size: u64 = self.compressed_buffer.len().try_into().unwrap();
-        self.next_block += current_block_size;
+        self.next_block += current_block_size + header_size;
         self.current_position_in_block = 0;
 
         Ok(())
@@ -225,6 +229,7 @@ mod test {
                 break;
             }
 
+            decompressed_data.clear();
             decompress_block(&mut decompressed_data, &block_data, &mut decompress)?;
 
             data_crc.update(&decompressed_data);
@@ -261,7 +266,7 @@ mod test {
             assert_eq!(&buf1[..], &buf2[..]);
         }
 
-        let mut buffer: [u8; 8] = [0; 8];
+        let mut buffer = [0; 30];
 
         reader.bgzf_seek(0)?;
         assert_eq!(reader.bgzf_pos(), 0);
@@ -270,7 +275,7 @@ mod test {
         assert_eq!(reader.bgzf_pos(), 35973);
         reader.read_exact(&mut buffer)?;
         assert!(
-            buffer.starts_with(b"1\t"),
+            buffer.starts_with(b"1\t4008153"),
             "{}",
             String::from_utf8_lossy(&buffer)
         );
@@ -278,7 +283,8 @@ mod test {
         reader.bgzf_seek(4210818610)?;
         assert_eq!(reader.bgzf_pos(), 4210818610);
         reader.read_exact(&mut buffer)?;
-        assert!(buffer.starts_with(b"1\t"));
+        assert!(buffer.starts_with(b"1\t72700625"));
+        //eprintln!("data: {}", String::from_utf8_lossy(&buffer));
         reader.bgzf_seek(9618658636)?;
         assert_eq!(reader.bgzf_pos(), 9618658636);
         reader.read_exact(&mut buffer)?;
@@ -287,6 +293,19 @@ mod test {
         assert_eq!(reader.bgzf_pos(), 135183301012);
         reader.read_exact(&mut buffer)?;
         assert!(buffer.starts_with(b"11\t"));
+
+        let mut tmp_buf = vec![0u8; 391474];
+        reader.bgzf_seek(0)?;
+        reader.read_exact(&mut tmp_buf)?;
+        //eprintln!("data: {}", String::from_utf8_lossy(&buffer));
+        assert_eq!(reader.bgzf_pos(), 4210818610);
+        reader.read_exact(&mut buffer)?;
+        assert!(
+            buffer.starts_with(b"1\t72700625"),
+            "{}",
+            String::from_utf8_lossy(&buffer)
+        );
+
         Ok(())
     }
 

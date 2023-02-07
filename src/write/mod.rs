@@ -52,6 +52,7 @@ impl<W: io::Write> BGZFWriter<W> {
     }
 
     fn write_block(&mut self) -> io::Result<()> {
+        self.compressed_buffer.clear();
         write_block(
             &mut self.compressed_buffer,
             &self.original_data,
@@ -81,6 +82,7 @@ impl<W: io::Write> io::Write for BGZFWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut process_start_pos = 0;
         loop {
+            eprintln!("process start pos: {}", process_start_pos);
             let to_write_bytes = (buf.len() - process_start_pos)
                 .min(self.compress_unit_size - self.original_data.len());
             if to_write_bytes == 0 {
@@ -88,15 +90,17 @@ impl<W: io::Write> io::Write for BGZFWriter<W> {
             }
             self.original_data
                 .extend_from_slice(&buf[process_start_pos..(process_start_pos + to_write_bytes)]);
-            self.write_block()?;
-            self.original_data.clear();
+            if self.original_data.len() >= self.compress_unit_size {
+                self.write_block()?;
+                self.original_data.clear();
+            }
             process_start_pos += to_write_bytes;
         }
 
         Ok(buf.len())
     }
     fn flush(&mut self) -> io::Result<()> {
-        while !self.original_data.is_empty() {
+        if !self.original_data.is_empty() {
             self.write_block()?;
         }
         Ok(())
@@ -126,15 +130,24 @@ pub fn write_block(
     original_data: &[u8],
     compress: &mut Compress,
 ) -> Result<usize, CompressError> {
+    eprintln!("write block : {} ", original_data.len());
+    let original_compressed_data_size = compressed_data.len();
     let mut header = BGZFHeader::new(false, 0, 0);
     let header_size: usize = header.header_size().try_into().unwrap();
     compressed_data.resize(
-        original_data.len() + EXTRA_COMPRESS_BUFFER_SIZE + header_size + FOOTER_SIZE,
+        original_compressed_data_size
+            + original_data.len()
+            + EXTRA_COMPRESS_BUFFER_SIZE
+            + header_size
+            + FOOTER_SIZE,
         0,
     );
 
-    let compressed_len = compress.compress(original_data, &mut compressed_data[header_size..])?;
-    compressed_data.truncate(header_size + compressed_len);
+    let compressed_len = compress.compress(
+        original_data,
+        &mut compressed_data[(original_compressed_data_size + header_size)..],
+    )?;
+    compressed_data.truncate(original_compressed_data_size + header_size + compressed_len);
 
     let mut crc = Crc::new();
     crc.update(original_data);
@@ -142,13 +155,17 @@ pub fn write_block(
     compressed_data.extend_from_slice(&crc.sum().to_le_bytes());
     compressed_data.extend_from_slice(&(original_data.len() as u32).to_le_bytes());
 
-    let block_size = compressed_data.len();
+    let block_size = compressed_data.len() - original_compressed_data_size;
+    //eprintln!("block size: {} / {}", block_size, original_data.len());
     header
         .update_block_size(block_size.try_into().unwrap())
         .expect("Unreachable");
 
     header
-        .write(&mut compressed_data[..header_size])
+        .write(
+            &mut compressed_data
+                [original_compressed_data_size..(header_size + original_compressed_data_size)],
+        )
         .expect("Failed to write header");
 
     Ok(block_size)

@@ -32,7 +32,7 @@ fn main() -> anyhow::Result<()> {
         let offset = file.seek(SeekFrom::Current(0))?;
         let header = bgzip::header::BGZFHeader::from_reader(&mut file)?;
         let compressed_size = header.block_size()?;
-        file.seek(SeekFrom::Current(compressed_size as i64 - 19 - 6 + 4))?;
+        file.seek(SeekFrom::Current(compressed_size as i64 - 20 - 6 + 4))?;
 
         let mut size_buf: [u8; 4] = [0, 0, 0, 0];
         file.read_exact(&mut size_buf)?;

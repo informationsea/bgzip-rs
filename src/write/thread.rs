@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use std::io::{Error, ErrorKind, Result, Write};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
+const DEFAULT_WRITE_BLOCK_UNIT_NUM: usize = 50;
+
 struct WriteBlock {
     index: u64,
     compress: Compress,
@@ -11,16 +13,16 @@ struct WriteBlock {
 }
 
 impl WriteBlock {
-    fn new(level: Compression, block_size: usize) -> Self {
+    fn new(level: Compression, compress_unit_size: usize, write_block_num: usize) -> Self {
         let compress = Compress::new(level);
 
         WriteBlock {
             index: 0,
             compress,
             compressed_buffer: Vec::with_capacity(
-                block_size + crate::write::EXTRA_COMPRESS_BUFFER_SIZE,
+                (compress_unit_size + crate::write::EXTRA_COMPRESS_BUFFER_SIZE) * write_block_num,
             ),
-            raw_buffer: Vec::with_capacity(block_size),
+            raw_buffer: Vec::with_capacity(compress_unit_size * write_block_num),
         }
     }
 
@@ -35,6 +37,7 @@ impl WriteBlock {
 pub struct BGZFMultiThreadWriter<W: Write> {
     writer: W,
     compress_unit_size: usize,
+    write_block_num: usize,
     block_list: Vec<WriteBlock>,
     write_waiting_blocks: HashMap<u64, WriteBlock>,
     writer_receiver: Receiver<WriteBlock>,
@@ -45,13 +48,19 @@ pub struct BGZFMultiThreadWriter<W: Write> {
 
 impl<W: Write> BGZFMultiThreadWriter<W> {
     pub fn new(writer: W, level: Compression) -> Result<Self> {
-        Self::with_compress_unit_size(writer, crate::write::DEFAULT_COMPRESS_UNIT_SIZE, level)
+        Self::with_compress_unit_size(
+            writer,
+            crate::write::DEFAULT_COMPRESS_UNIT_SIZE,
+            DEFAULT_WRITE_BLOCK_UNIT_NUM,
+            level,
+        )
     }
 
     /// Create new
     pub fn with_compress_unit_size(
         writer: W,
         compress_unit_size: usize,
+        write_block_num: usize,
         level: Compression,
     ) -> Result<Self> {
         if compress_unit_size >= crate::write::MAXIMUM_COMPRESS_UNIT_SIZE {
@@ -66,8 +75,9 @@ impl<W: Write> BGZFMultiThreadWriter<W> {
         Ok(BGZFMultiThreadWriter {
             writer,
             compress_unit_size,
+            write_block_num,
             block_list: (0..(rayon::current_num_threads() * 2))
-                .map(|_| WriteBlock::new(level, compress_unit_size))
+                .map(|_| WriteBlock::new(level, compress_unit_size, write_block_num))
                 .collect(),
             write_waiting_blocks: HashMap::new(),
             writer_receiver: rx,
@@ -133,15 +143,30 @@ impl<W: Write> BGZFMultiThreadWriter<W> {
         block.index = self.next_compress_index;
         self.next_compress_index += 1;
         let sender = self.writer_sender.clone();
-        //eprintln!("spawn thread: {}", block.index);
+        // eprintln!("spawn thread: {}", block.index);
+        let compress_unit_size = self.compress_unit_size;
         rayon::spawn_fifo(move || {
-            //eprintln!("started thread: {}", block.index);
-            crate::write::write_block(
-                &mut block.compressed_buffer,
-                &block.raw_buffer,
-                &mut block.compress,
-            )
-            .expect("Failed to write block");
+            // eprintln!("started thread: {}", block.index);
+            block.compressed_buffer.clear();
+            let mut wrote_bytes = 0;
+
+            while wrote_bytes < block.raw_buffer.len() {
+                // eprintln!(
+                //     "write block: {} / {}, {}",
+                //     block.index,
+                //     wrote_bytes,
+                //     String::from_utf8_lossy(&block.raw_buffer[wrote_bytes..(wrote_bytes + 10)])
+                // );
+                let bytes_to_write = (block.raw_buffer.len() - wrote_bytes).min(compress_unit_size);
+                crate::write::write_block(
+                    &mut block.compressed_buffer,
+                    &block.raw_buffer[wrote_bytes..(wrote_bytes + bytes_to_write)],
+                    &mut block.compress,
+                )
+                .expect("Failed to write block");
+                wrote_bytes += bytes_to_write;
+            }
+
             //eprintln!("finished thread: {}", block.index);
             sender.send(block).expect("failed to send write result");
         });
@@ -160,7 +185,8 @@ impl<W: Write> Write for BGZFMultiThreadWriter<W> {
         while wrote_bytes < buf.len() {
             self.process_buffer(self.block_list.is_empty(), false)?;
             let current_buffer = self.block_list.get_mut(0).unwrap();
-            let remain_buffer = self.compress_unit_size - current_buffer.raw_buffer.len();
+            let remain_buffer =
+                (self.compress_unit_size * self.write_block_num) - current_buffer.raw_buffer.len();
             let bytes_to_write = remain_buffer.min(buf.len() - wrote_bytes);
             current_buffer
                 .raw_buffer
@@ -215,8 +241,12 @@ mod test {
         let mut rand = rand_pcg::Pcg64Mcg::seed_from_u64(0x9387402456157523);
         let path = "./target/test_thread_writer.data.gz";
         let write_file = std::io::BufWriter::new(std::fs::File::create(path)?);
-        let mut writer =
-            BGZFMultiThreadWriter::with_compress_unit_size(write_file, 1024, Compression::best())?;
+        let mut writer = BGZFMultiThreadWriter::with_compress_unit_size(
+            write_file,
+            1024,
+            30,
+            Compression::best(),
+        )?;
 
         let mut data = vec![0; BUF_SIZE];
 
