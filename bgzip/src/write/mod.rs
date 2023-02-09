@@ -82,7 +82,7 @@ impl<W: io::Write> io::Write for BGZFWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut process_start_pos = 0;
         loop {
-            eprintln!("process start pos: {}", process_start_pos);
+            //eprintln!("process start pos: {}", process_start_pos);
             let to_write_bytes = (buf.len() - process_start_pos)
                 .min(self.compress_unit_size - self.original_data.len());
             if to_write_bytes == 0 {
@@ -130,7 +130,7 @@ pub fn write_block(
     original_data: &[u8],
     compress: &mut Compress,
 ) -> Result<usize, CompressError> {
-    eprintln!("write block : {} ", original_data.len());
+    //eprintln!("write block : {} ", original_data.len());
     let original_compressed_data_size = compressed_data.len();
     let mut header = BGZFHeader::new(false, 0, 0);
     let header_size: usize = header.header_size().try_into().unwrap();
