@@ -104,7 +104,7 @@ fn process_file(cli: &Cli, input_path: Option<&str>) -> anyhow::Result<()> {
     let mut delete_input = !cli.keep;
 
     let mut input: Box<dyn Read> = if let Some(path) = input_path {
-        if path.ends_with(".gz") {
+        if path.ends_with(".gz") && !cli.decompress {
             eprintln!("{} already has .gz suffix -- unchanged", path);
             return Ok(());
         }
