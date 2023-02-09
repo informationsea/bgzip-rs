@@ -2,14 +2,28 @@ name: Build
 
 on:
   push:
-    branches: [master, test-actions]
+    branches: [master, test-actions, bgzip-cli]
   pull_request:
-    branches: [master]
+    branches: [master, bgzip-cli]
 
 env:
   CARGO_TERM_COLOR: always
+  APP_NAME: bgzip-rs
 
 jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Short tag
+        id: short_tag
+        if: ${{ startsWith(github.ref, 'refs/tags/v')  }}
+        run: echo "tag=$(basename ${{ github.ref }})" >> $GITHUB_OUTPUT
+      - name: Hash
+        id: hash
+        if: ${{ startsWith(github.ref, 'refs/heads/')  }}
+        run: echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+    outputs:
+      tag: ${{ steps.short_tag.outputs.tag }}${{ steps.hash.outputs.tag }}
   build:
     runs-on: ${{ matrix.config.os }}
     strategy:
@@ -107,3 +121,30 @@ jobs:
         with:
           command: test
           args: --no-default-features --features rayon,libdeflater --release --target ${{ matrix.config.target }}
+      - name: Build release binary
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --bin bgzip-rs
+      - name: Create release zip for UNIX
+        if: ${{ matrix.config.os != 'windows-latest' }}
+        run: |
+          mkdir -p ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}
+          cp target/${{ matrix.config.target }}/release/${{ env.APP_NAME }} ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
+          cp README.md ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
+          cp LICENSE ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
+          zip -r ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}.zip ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
+      - name: Create release zip for Windows
+        if: ${{ matrix.config.os == 'windows-latest' }}
+        run: |
+          mkdir ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}
+          cp target/${{ matrix.config.target }}/release/${{ env.APP_NAME }}.exe ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
+          cp README.md ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
+          cp LICENSE ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
+          Compress-Archive -DestinationPath ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}.zip -Path ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag}}.zip
+          path: |
+            ./${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}.zip

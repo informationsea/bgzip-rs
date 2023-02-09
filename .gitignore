@@ -3,3 +3,4 @@
 .cargo
 perf.data*
 .vscode
+/tmp
