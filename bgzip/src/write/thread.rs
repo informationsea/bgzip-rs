@@ -239,7 +239,7 @@ mod test {
     #[test]
     fn test_thread_writer() -> anyhow::Result<()> {
         let mut rand = rand_pcg::Pcg64Mcg::seed_from_u64(0x9387402456157523);
-        let path = "./target/test_thread_writer.data.gz";
+        let path = "./tmp/test_thread_writer.data.gz";
         let write_file = std::io::BufWriter::new(std::fs::File::create(path)?);
         let mut writer = BGZFMultiThreadWriter::with_compress_unit_size(
             write_file,

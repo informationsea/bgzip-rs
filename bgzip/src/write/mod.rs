@@ -187,7 +187,7 @@ mod test {
         )?);
         reader.read_to_end(&mut data)?;
 
-        let output_path = "target/test.vcf.gz";
+        let output_path = "tmp/test.vcf.gz";
         let mut writer = BGZFWriter::new(fs::File::create(output_path)?, Compression::default());
         writer.write_all(&data)?;
         std::mem::drop(writer);
@@ -202,7 +202,7 @@ mod test {
 
     #[test]
     fn test_simple() -> io::Result<()> {
-        let output_path = "target/simple1.txt.gz";
+        let output_path = "tmp/simple1.txt.gz";
         let mut writer = BGZFWriter::new(fs::File::create(output_path)?, Compression::default());
         writer.write_all(b"1234")?;
         std::mem::drop(writer);
@@ -215,7 +215,7 @@ mod test {
 
     #[test]
     fn test_write_bed() -> anyhow::Result<()> {
-        const TEST_OUTPUT_PATH: &str = "target/test.bed.gz";
+        const TEST_OUTPUT_PATH: &str = "tmp/test.bed.gz";
 
         let mut writer =
             BGZFWriter::new(fs::File::create(TEST_OUTPUT_PATH)?, Compression::default());

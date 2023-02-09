@@ -1,0 +1,14 @@
+[package]
+name = "bgzip-rs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = { version = "4.1.4", features = ["derive", "cargo"] }
+bgzip = { path = "../bgzip", features = ["libdeflater", "log", "rayon"], default-features = false }
+rayon = "1.6.1"
+anyhow = "1.0.69"
+is-terminal = "0.4.3"
+# flate2 = { version = "1.0.25", features = ["zlib-ng"], default-features = false }

@@ -176,7 +176,7 @@ mod test {
         let tabix = Tabix::from_reader(&mut reader)?;
         //println!("{:?}", tabix);
 
-        let mut chunks_writer = csv::Writer::from_path("target/sequence.csv")?;
+        let mut chunks_writer = csv::Writer::from_path("tmp/sequence.csv")?;
         chunks_writer.write_record(&[
             "sequence name",
             "bin index",
