@@ -150,7 +150,6 @@ jobs:
         if: ${{ matrix.config.os != 'windows-latest' }}
         run: |
           mkdir -p ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}
-          ls target/release target/${{ matrix.config.target }}/release
           cp target/${{ matrix.config.target }}/release/${{ env.APP_NAME }} ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
           cp README.md ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
           cp LICENSE ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
@@ -169,3 +168,35 @@ jobs:
           name: ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag}}.zip
           path: |
             ./${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}.zip
+
+  release:
+    needs: [build, tag]
+    runs-on: ubuntu-latest
+    if: ${{ startsWith(github.ref, 'refs/tags/v')  }}
+    steps:
+      - name: Download artifact 1
+        uses: actions/download-artifact@v3
+        env:
+          TARGET: x86_64-pc-windows-msvc
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.TARGET }}-${{ needs.tag.outputs.tag }}.zip
+      - name: Download artifact 2
+        uses: actions/download-artifact@v3
+        env:
+          TARGET: x86_64-apple-darwin
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.TARGET }}-${{ needs.tag.outputs.tag }}.zip
+      - name: Download artifact 3
+        uses: actions/download-artifact@v3
+        env:
+          TARGET: x86_64-unknown-linux-musl
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.TARGET }}-${{ needs.tag.outputs.tag }}.zip
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ${{ env.APP_NAME }}-x86_64-pc-windows-msvc-${{ needs.tag.outputs.tag }}.zip
+            ${{ env.APP_NAME }}-x86_64-apple-darwin-${{ needs.tag.outputs.tag }}.zip
+            ${{ env.APP_NAME }}-x86_64-unknown-linux-musl-${{ needs.tag.outputs.tag }}.zip
+          draft: true
