@@ -193,11 +193,40 @@ jobs:
           TARGET: x86_64-unknown-linux-musl
         with:
           name: ${{ env.APP_NAME }}-${{ env.TARGET }}-${{ needs.tag.outputs.tag }}.zip
+      - name: Download artifact 4
+        uses: actions/download-artifact@v3
+        env:
+          TARGET: i686-pc-windows-msvc
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.TARGET }}-${{ needs.tag.outputs.tag }}.zip
+      - name: Download artifact 5
+        uses: actions/download-artifact@v3
+        env:
+          TARGET: aarch64-apple-darwin
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.TARGET }}-${{ needs.tag.outputs.tag }}.zip
+      - name: Download artifact 6
+        uses: actions/download-artifact@v3
+        env:
+          TARGET: x86_64-unknown-linux-gnu
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.TARGET }}-${{ needs.tag.outputs.tag }}.zip
+      - name: Download artifact 7
+        uses: actions/download-artifact@v3
+        env:
+          TARGET: aarch64-unknown-linux-gnu
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.TARGET }}-${{ needs.tag.outputs.tag }}.zip
       - name: Create release
         uses: softprops/action-gh-release@v1
         with:
           files: |
             ${{ env.APP_NAME }}-x86_64-pc-windows-msvc-${{ needs.tag.outputs.tag }}.zip
+            ${{ env.APP_NAME }}-i686-pc-windows-msvc-${{ needs.tag.outputs.tag }}.zip
+            ${{ env.APP_NAME }}-aarch64-pc-windows-msvc-${{ needs.tag.outputs.tag }}.zip
             ${{ env.APP_NAME }}-x86_64-apple-darwin-${{ needs.tag.outputs.tag }}.zip
+            ${{ env.APP_NAME }}-aarch64-apple-darwin-${{ needs.tag.outputs.tag }}.zip
             ${{ env.APP_NAME }}-x86_64-unknown-linux-musl-${{ needs.tag.outputs.tag }}.zip
+            ${{ env.APP_NAME }}-x86_64-unknown-linux-gnu-${{ needs.tag.outputs.tag }}.zip
+            ${{ env.APP_NAME }}-aarch64-unknown-linux-gnu-${{ needs.tag.outputs.tag }}.zip
           draft: true
