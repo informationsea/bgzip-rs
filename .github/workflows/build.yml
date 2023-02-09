@@ -25,6 +25,7 @@ jobs:
     outputs:
       tag: ${{ steps.short_tag.outputs.tag }}${{ steps.hash.outputs.tag }}
   build:
+    needs: tag
     runs-on: ${{ matrix.config.os }}
     strategy:
       matrix:
@@ -130,6 +131,7 @@ jobs:
         if: ${{ matrix.config.os != 'windows-latest' }}
         run: |
           mkdir -p ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}
+          ls target/release target/${{ matrix.config.target }}/release
           cp target/${{ matrix.config.target }}/release/${{ env.APP_NAME }} ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
           cp README.md ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
           cp LICENSE ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
@@ -143,7 +145,7 @@ jobs:
           cp LICENSE ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
           Compress-Archive -DestinationPath ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}.zip -Path ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
       - name: Upload artifacts
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag}}.zip
           path: |
