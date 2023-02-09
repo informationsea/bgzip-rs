@@ -136,7 +136,7 @@ fn process_file(cli: &Cli, input_path: Option<&str>) -> anyhow::Result<()> {
         }
         Box::new(File::create(new_path)?)
     } else {
-        if std::io::stdout().is_terminal() && !cli.force {
+        if std::io::stdout().is_terminal() && !cli.force && !cli.decompress {
             return Err(anyhow::anyhow!(
                 "compressed data not written to a terminal. Use -f to force compression."
             ));
