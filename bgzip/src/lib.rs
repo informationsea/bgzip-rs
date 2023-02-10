@@ -63,7 +63,7 @@ pub(crate) mod deflate;
 /// BGZ header parser
 pub mod header;
 pub mod read;
-pub use deflate::Compression;
+pub use deflate::{Compression, CompressionLevelError};
 /// Tabix file parser. (This module is alpha state.)
 pub mod tabix;
 pub mod write;
@@ -71,7 +71,48 @@ pub use error::BGZFError;
 pub use read::BGZFReader;
 pub use write::BGZFWriter;
 
-use std::io;
+use std::{convert::TryInto, io};
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct BGZFIndex {
+    pub entries: Vec<BGZFIndexEntry>,
+}
+
+impl BGZFIndex {
+    pub fn new() -> Self {
+        BGZFIndex::default()
+    }
+
+    pub fn from_reader<R: std::io::Read>(mut reader: R) -> std::io::Result<Self> {
+        let num_entries = reader.read_le_u64()?;
+        let mut result = BGZFIndex::default();
+        for _ in 0..num_entries {
+            let compressed_offset = reader.read_le_u64()?;
+            let uncompressed_offset = reader.read_le_u64()?;
+            result.entries.push(BGZFIndexEntry {
+                compressed_offset,
+                uncompressed_offset,
+            })
+        }
+        Ok(result)
+    }
+
+    pub fn write<W: std::io::Write>(&self, mut writer: W) -> std::io::Result<()> {
+        let entries: u64 = self.entries.len().try_into().unwrap();
+        writer.write_all(&entries.to_le_bytes())?;
+        for one in &self.entries {
+            writer.write_all(&one.compressed_offset.to_le_bytes())?;
+            writer.write_all(&one.uncompressed_offset.to_le_bytes())?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BGZFIndexEntry {
+    pub compressed_offset: u64,
+    pub uncompressed_offset: u64,
+}
 
 /// End-of-file maker.
 ///
@@ -128,48 +169,57 @@ pub(crate) trait BinaryReader: io::Read {
 
 impl<R: io::Read> BinaryReader for R {}
 
-// #[cfg(test)]
-// mod test {
-//     use crate::deflate::Compression;
-//     use crate::BGZFError;
-//     use crate::BGZFReader;
-//     use crate::BGZFWriter;
-//     use std::fs;
-//     use std::io::{BufRead, Write};
-//     #[test]
-//     fn test_run() -> Result<(), BGZFError> {
-//         let mut write_buffer = Vec::new();
-//         let mut writer = BGZFWriter::new(&mut write_buffer, Compression::default());
-//         writer.write_all(b"##fileformat=VCFv4.2\n")?;
-//         writer.write_all(b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")?;
-//         writer.close()?;
-//         Ok(())
-//     }
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::fs;
+    use std::io::{BufRead, Write};
+    #[test]
+    fn test_run() -> Result<(), BGZFError> {
+        let mut write_buffer = Vec::new();
+        let mut writer = BGZFWriter::new(&mut write_buffer, Compression::default());
+        writer.write_all(b"##fileformat=VCFv4.2\n")?;
+        writer.write_all(b"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")?;
+        writer.close()?;
+        Ok(())
+    }
 
-//     #[test]
-//     fn test_read() -> Result<(), BGZFError> {
-//         let mut reader =
-//             BGZFReader::new(fs::File::open("testfiles/common_all_20180418_half.vcf.gz")?);
-//         let mut line = String::new();
-//         reader.read_line(&mut line)?;
-//         assert_eq!("##fileformat=VCFv4.0\n", line);
-//         reader.bgzf_seek(4210818610)?;
-//         line.clear();
-//         reader.read_line(&mut line)?;
-//         assert_eq!("1\t72700625\trs12116859\tT\tA,C\t.\t.\tRS=12116859;RSPOS=72700625;dbSNPBuildID=120;SSR=0;SAO=0;VP=0x05010008000517053e000100;GENEINFO=LOC105378798:105378798;WGT=1;VC=SNV;SLO;INT;ASP;VLD;G5A;G5;HD;GNO;KGPhase1;KGPhase3;CAF=0.508,.,0.492;COMMON=1;TOPMED=0.37743692660550458,0.00608435270132517,0.61647872069317023\n", line);
+    #[test]
+    fn test_read() -> Result<(), BGZFError> {
+        let mut reader =
+            BGZFReader::new(fs::File::open("testfiles/common_all_20180418_half.vcf.gz")?)?;
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+        assert_eq!("##fileformat=VCFv4.0\n", line);
+        reader.bgzf_seek(4210818610)?;
+        line.clear();
+        reader.read_line(&mut line)?;
+        assert_eq!("1\t72700625\trs12116859\tT\tA,C\t.\t.\tRS=12116859;RSPOS=72700625;dbSNPBuildID=120;SSR=0;SAO=0;VP=0x05010008000517053e000100;GENEINFO=LOC105378798:105378798;WGT=1;VC=SNV;SLO;INT;ASP;VLD;G5A;G5;HD;GNO;KGPhase1;KGPhase3;CAF=0.508,.,0.492;COMMON=1;TOPMED=0.37743692660550458,0.00608435270132517,0.61647872069317023\n", line);
 
-//         Ok(())
-//     }
+        Ok(())
+    }
 
-//     #[test]
-//     fn test_read_all() -> Result<(), BGZFError> {
-//         let reader = BGZFReader::new(fs::File::open("testfiles/common_all_20180418_half.vcf.gz")?);
-//         let expected_reader = std::io::BufReader::new(flate2::read::MultiGzDecoder::new(
-//             fs::File::open("testfiles/common_all_20180418_half.vcf.gz")?,
-//         ));
-//         for (line1, line2) in reader.lines().zip(expected_reader.lines()) {
-//             assert_eq!(line1?, line2?);
-//         }
-//         Ok(())
-//     }
-// }
+    #[test]
+    fn test_read_all() -> Result<(), BGZFError> {
+        let reader = BGZFReader::new(fs::File::open("testfiles/common_all_20180418_half.vcf.gz")?)?;
+        let expected_reader = std::io::BufReader::new(flate2::read::MultiGzDecoder::new(
+            fs::File::open("testfiles/common_all_20180418_half.vcf.gz")?,
+        ));
+        for (line1, line2) in reader.lines().zip(expected_reader.lines()) {
+            assert_eq!(line1?, line2?);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_index_read_write() -> anyhow::Result<()> {
+        let data = fs::read("testfiles/generated.bed.gz.gzi")?;
+        let index = BGZFIndex::from_reader(&data[..])?;
+        assert_eq!(index.entries.len(), 295);
+        let mut generated_data = Vec::new();
+        index.write(&mut generated_data)?;
+        assert_eq!(data, generated_data);
+
+        Ok(())
+    }
+}

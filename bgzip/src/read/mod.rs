@@ -62,9 +62,7 @@ pub fn decompress_block(
     let expected_crc = u32::from_le_bytes(expected_crc_data);
     crc.update(&decompressed_data[original_decompress_data_len..]);
     if expected_crc != crc.sum() {
-        return Err(BGZFError::Other {
-            message: "unmatched CRC32 of decompressed data",
-        });
+        return Err(BGZFError::Other("unmatched CRC32 of decompressed data"));
     }
 
     Ok(())

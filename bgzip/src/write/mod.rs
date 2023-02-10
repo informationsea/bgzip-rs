@@ -6,10 +6,18 @@ mod thread;
 #[cfg(feature = "rayon")]
 pub use thread::BGZFMultiThreadWriter;
 
-use crate::deflate::*;
 use crate::header::BGZFHeader;
+use crate::{deflate::*, BGZFError, BGZFIndex};
 use std::convert::TryInto;
 use std::io::{self, Write};
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct BGZFWritePos {
+    block_index: u64,
+    wrote_bytes: u64,
+    position_in_block: u64,
+    block_position: Option<u64>,
+}
 
 /// A BGZF writer
 pub struct BGZFWriter<W: io::Write> {
@@ -19,6 +27,9 @@ pub struct BGZFWriter<W: io::Write> {
     compress: Compress,
     compress_unit_size: usize,
     closed: bool,
+    current_compressed_pos: u64,
+    current_uncompressed_pos: u64,
+    bgzf_index: Option<BGZFIndex>,
 }
 
 /// Default BGZF compress unit size
@@ -32,7 +43,8 @@ pub(crate) const EXTRA_COMPRESS_BUFFER_SIZE: usize = 200;
 impl<W: io::Write> BGZFWriter<W> {
     /// Create new BGZF writer from [`std::io::Write`]
     pub fn new(writer: W, level: Compression) -> Self {
-        Self::with_compress_unit_size(writer, level, DEFAULT_COMPRESS_UNIT_SIZE)
+        Self::with_compress_unit_size(writer, level, DEFAULT_COMPRESS_UNIT_SIZE, true)
+            .expect("Unreachable (BGZFWriter)")
     }
 
     /// Cerate new BGZF writer with compress unit size.
@@ -40,15 +52,35 @@ impl<W: io::Write> BGZFWriter<W> {
         writer: W,
         level: Compression,
         compress_unit_size: usize,
-    ) -> Self {
-        BGZFWriter {
+        create_index: bool,
+    ) -> Result<Self, BGZFError> {
+        if compress_unit_size >= crate::write::MAXIMUM_COMPRESS_UNIT_SIZE {
+            return Err(BGZFError::TooLargeCompressUnit);
+        }
+
+        Ok(BGZFWriter {
             writer,
             original_data: Vec::with_capacity(compress_unit_size),
             compressed_buffer: Vec::with_capacity(compress_unit_size + EXTRA_COMPRESS_BUFFER_SIZE),
             compress_unit_size,
             compress: Compress::new(level),
             closed: false,
-        }
+            current_uncompressed_pos: 0,
+            current_compressed_pos: 0,
+            bgzf_index: if create_index {
+                Some(BGZFIndex::new())
+            } else {
+                None
+            },
+        })
+    }
+
+    pub fn bgzf_pos(&self) -> u64 {
+        self.current_compressed_pos << 16 | (self.original_data.len() & 0xffff) as u64
+    }
+
+    pub fn pos(&self) -> u64 {
+        self.current_uncompressed_pos + TryInto::<u64>::try_into(self.original_data.len()).unwrap()
     }
 
     fn write_block(&mut self) -> io::Result<()> {
@@ -61,6 +93,18 @@ impl<W: io::Write> BGZFWriter<W> {
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
         self.writer.write_all(&self.compressed_buffer)?;
 
+        self.current_uncompressed_pos +=
+            TryInto::<u64>::try_into(self.original_data.len()).unwrap();
+        self.current_compressed_pos +=
+            TryInto::<u64>::try_into(self.compressed_buffer.len()).unwrap();
+
+        if let Some(index) = self.bgzf_index.as_mut() {
+            index.entries.push(crate::BGZFIndexEntry {
+                compressed_offset: self.current_compressed_pos,
+                uncompressed_offset: self.current_uncompressed_pos,
+            });
+        }
+
         Ok(())
     }
 
@@ -68,13 +112,18 @@ impl<W: io::Write> BGZFWriter<W> {
     ///
     /// Explicitly call of this method is not required. Drop trait will write end-of-file marker automatically.
     /// If you need to handle I/O errors while closing, please use this method.
-    pub fn close(mut self) -> io::Result<()> {
+    pub fn close(mut self) -> io::Result<Option<BGZFIndex>> {
         if !self.closed {
             self.flush()?;
             self.writer.write_all(&crate::EOF_MARKER)?;
             self.closed = true;
         }
-        Ok(())
+
+        if let Some(index) = self.bgzf_index.as_mut() {
+            index.entries.pop();
+        }
+
+        Ok(self.bgzf_index.take())
     }
 }
 
@@ -82,7 +131,7 @@ impl<W: io::Write> io::Write for BGZFWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut process_start_pos = 0;
         loop {
-            eprintln!("process start pos: {}", process_start_pos);
+            //eprintln!("process start pos: {}", process_start_pos);
             let to_write_bytes = (buf.len() - process_start_pos)
                 .min(self.compress_unit_size - self.original_data.len());
             if to_write_bytes == 0 {
@@ -130,7 +179,7 @@ pub fn write_block(
     original_data: &[u8],
     compress: &mut Compress,
 ) -> Result<usize, CompressError> {
-    eprintln!("write block : {} ", original_data.len());
+    //eprintln!("write block : {} ", original_data.len());
     let original_compressed_data_size = compressed_data.len();
     let mut header = BGZFHeader::new(false, 0, 0);
     let header_size: usize = header.header_size().try_into().unwrap();
@@ -173,14 +222,16 @@ pub fn write_block(
 
 #[cfg(test)]
 mod test {
+    use crate::BGZFReader;
     use crate::{deflate::Compression, BinaryReader};
+    use rand::prelude::*;
 
     use super::*;
     use std::fs::{self, File};
-    use std::io::{BufReader, Read, Write};
+    use std::io::{BufRead, BufReader, Read, Write};
 
     #[test]
-    fn test_vcf() -> io::Result<()> {
+    fn test_vcf() -> anyhow::Result<()> {
         let mut data = Vec::new();
         let mut reader = flate2::read::MultiGzDecoder::new(fs::File::open(
             "testfiles/common_all_20180418_half.vcf.gz",
@@ -190,7 +241,10 @@ mod test {
         let output_path = "tmp/test.vcf.gz";
         let mut writer = BGZFWriter::new(fs::File::create(output_path)?, Compression::default());
         writer.write_all(&data)?;
-        std::mem::drop(writer);
+        writer
+            .close()?
+            .unwrap()
+            .write(fs::File::create(format!("{}.gzi", output_path))?)?;
 
         let mut reader = flate2::read::MultiGzDecoder::new(fs::File::open(output_path)?);
         let mut wrote_data = Vec::new();
@@ -201,7 +255,7 @@ mod test {
     }
 
     #[test]
-    fn test_simple() -> io::Result<()> {
+    fn test_simple() -> anyhow::Result<()> {
         let output_path = "tmp/simple1.txt.gz";
         let mut writer = BGZFWriter::new(fs::File::create(output_path)?, Compression::default());
         writer.write_all(b"1234")?;
@@ -270,6 +324,43 @@ mod test {
 
         let mut buf = vec![0u8; 100];
         assert_eq!(result_reader.read(&mut buf)?, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_bgzf_pos() -> anyhow::Result<()> {
+        let mut data_reader = std::io::BufReader::new(flate2::read::MultiGzDecoder::new(
+            fs::File::open("testfiles/generated.bed.gz")?,
+        ));
+        let mut line = String::new();
+        let mut line_list = Vec::new();
+        let mut writer = BGZFWriter::new(
+            fs::File::create("tmp/write-pos.bed.gz")?,
+            Compression::default(),
+        );
+
+        loop {
+            let pos = writer.bgzf_pos();
+            line.clear();
+            let size = data_reader.read_line(&mut line)?;
+            if size == 0 {
+                break;
+            }
+            writer.write_all(&line.as_bytes())?;
+            line_list.push((pos, line.clone()));
+        }
+        writer.close()?;
+
+        let mut rand = rand_pcg::Pcg64Mcg::seed_from_u64(0x9387402456157523);
+        let mut reader = BGZFReader::new(fs::File::open("tmp/write-pos.bed.gz")?)?;
+        for _ in 0..300 {
+            let i = rand.gen_range(0..line_list.len());
+            reader.bgzf_seek(line_list[i].0)?;
+            line.clear();
+            reader.read_line(&mut line)?;
+            assert_eq!(line, line_list[i].1);
+        }
 
         Ok(())
     }

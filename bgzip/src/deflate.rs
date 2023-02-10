@@ -10,6 +10,12 @@ pub use flate2::Crc;
 #[cfg(feature = "libdeflater")]
 pub use libdeflater::Crc;
 
+#[derive(Debug, Clone, Copy, Error)]
+pub enum CompressionLevelError {
+    #[error("Invalid compression level")]
+    InvalidValue,
+}
+
 #[cfg(not(feature = "libdeflater"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Compression(flate2::Compression);
@@ -20,8 +26,8 @@ pub struct Compression(libdeflater::CompressionLvl);
 
 #[cfg(not(feature = "libdeflater"))]
 impl Compression {
-    pub const fn new(level: u32) -> Self {
-        Compression(flate2::Compression::new(level))
+    pub const fn new(level: u32) -> Result<Self, CompressionLevelError> {
+        Ok(Compression(flate2::Compression::new(level)))
     }
 
     pub const fn best() -> Self {
@@ -42,8 +48,14 @@ impl From<flate2::Compression> for Compression {
 
 #[cfg(feature = "libdeflater")]
 impl Compression {
-    pub fn new(level: u32) -> Self {
-        Compression(libdeflater::CompressionLvl::new(level.try_into().unwrap()).unwrap())
+    pub fn new(level: u32) -> Result<Self, CompressionLevelError> {
+        Ok(Compression(
+            libdeflater::CompressionLvl::new(level.try_into().unwrap()).map_err(|e| match e {
+                libdeflater::CompressionLvlError::InvalidValue => {
+                    CompressionLevelError::InvalidValue
+                }
+            })?,
+        ))
     }
 
     pub fn best() -> Self {

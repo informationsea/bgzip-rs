@@ -95,9 +95,7 @@ impl Tabix {
         let mut buf: [u8; 4] = [0, 0, 0, 0];
         reader.read_exact(&mut buf)?;
         if buf != [b'T', b'B', b'I', 1] {
-            return Err(BGZFError::Other {
-                message: "Not Tabix format",
-            });
+            return Err(BGZFError::Other("Not Tabix format"));
         }
         let number_of_references = reader.read_le_i32()?;
         let format = reader.read_le_i32()?;

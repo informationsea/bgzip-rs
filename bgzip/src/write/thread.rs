@@ -1,15 +1,23 @@
-use crate::deflate::*;
+use crate::{deflate::*, BGZFError, BGZFIndex};
 use std::collections::HashMap;
-use std::io::{Error, ErrorKind, Result, Write};
+use std::convert::TryInto;
+use std::io::{self, Error, ErrorKind, Write};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 const DEFAULT_WRITE_BLOCK_UNIT_NUM: usize = 50;
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+struct BlockSize {
+    uncompressed_size: usize,
+    compressed_size: usize,
+}
 
 struct WriteBlock {
     index: u64,
     compress: Compress,
     compressed_buffer: Vec<u8>,
     raw_buffer: Vec<u8>,
+    block_sizes: Vec<BlockSize>,
 }
 
 impl WriteBlock {
@@ -23,6 +31,7 @@ impl WriteBlock {
                 (compress_unit_size + crate::write::EXTRA_COMPRESS_BUFFER_SIZE) * write_block_num,
             ),
             raw_buffer: Vec::with_capacity(compress_unit_size * write_block_num),
+            block_sizes: Vec::new(),
         }
     }
 
@@ -30,6 +39,7 @@ impl WriteBlock {
         self.index = 0;
         self.compressed_buffer.clear();
         self.raw_buffer.clear();
+        self.block_sizes.clear();
     }
 }
 
@@ -44,16 +54,23 @@ pub struct BGZFMultiThreadWriter<W: Write> {
     writer_sender: Sender<WriteBlock>,
     next_write_index: u64,
     next_compress_index: u64,
+    closed: bool,
+
+    current_compressed_pos: u64,
+    current_uncompressed_pos: u64,
+    bgzf_index: Option<BGZFIndex>,
 }
 
 impl<W: Write> BGZFMultiThreadWriter<W> {
-    pub fn new(writer: W, level: Compression) -> Result<Self> {
+    pub fn new(writer: W, level: Compression) -> Self {
         Self::with_compress_unit_size(
             writer,
             crate::write::DEFAULT_COMPRESS_UNIT_SIZE,
             DEFAULT_WRITE_BLOCK_UNIT_NUM,
             level,
+            true,
         )
+        .expect("Unreachable (BGZFMultiThreadWriter)")
     }
 
     /// Create new
@@ -62,12 +79,10 @@ impl<W: Write> BGZFMultiThreadWriter<W> {
         compress_unit_size: usize,
         write_block_num: usize,
         level: Compression,
-    ) -> Result<Self> {
+        create_index: bool,
+    ) -> Result<Self, BGZFError> {
         if compress_unit_size >= crate::write::MAXIMUM_COMPRESS_UNIT_SIZE {
-            return Err(Error::new(
-                ErrorKind::Other,
-                "Too large compress block size",
-            ));
+            return Err(BGZFError::TooLargeCompressUnit);
         }
 
         let (tx, rx) = channel();
@@ -84,13 +99,41 @@ impl<W: Write> BGZFMultiThreadWriter<W> {
             writer_sender: tx,
             next_write_index: 0,
             next_compress_index: 0,
+            closed: false,
+            current_uncompressed_pos: 0,
+            current_compressed_pos: 0,
+            bgzf_index: if create_index {
+                Some(BGZFIndex::new())
+            } else {
+                None
+            },
         })
     }
 
-    fn process_buffer(&mut self, block: bool, block_all: bool) -> Result<()> {
+    fn add_write_index(&mut self, mut next_data: WriteBlock) -> io::Result<()> {
+        self.writer.write_all(&next_data.compressed_buffer)?;
+        for one in &next_data.block_sizes {
+            self.current_compressed_pos += TryInto::<u64>::try_into(one.compressed_size).unwrap();
+            self.current_uncompressed_pos +=
+                TryInto::<u64>::try_into(one.uncompressed_size).unwrap();
+            if let Some(index) = self.bgzf_index.as_mut() {
+                index.entries.push(crate::BGZFIndexEntry {
+                    compressed_offset: self.current_compressed_pos,
+                    uncompressed_offset: self.current_uncompressed_pos,
+                })
+            }
+        }
+
+        self.next_write_index += 1;
+        next_data.reset();
+        self.block_list.push(next_data);
+        Ok(())
+    }
+
+    fn process_buffer(&mut self, block: bool, block_all: bool) -> io::Result<()> {
         let mut current_block = block;
         while self.next_compress_index != self.next_write_index {
-            let mut next_data = if current_block {
+            let next_data = if current_block {
                 self.writer_receiver
                     .recv()
                     .map_err(|_| Error::new(ErrorKind::Other, "Closed channel"))?
@@ -108,25 +151,12 @@ impl<W: Write> BGZFMultiThreadWriter<W> {
             //     next_data.index, self.next_write_index, self.next_compress_index
             // );
             if next_data.index == self.next_write_index {
-                self.writer.write_all(&next_data.compressed_buffer)?;
-                //eprintln!("write block 1: {}", next_data.index);
-                self.next_write_index += 1;
-                next_data.reset();
-                self.block_list.push(next_data);
+                self.add_write_index(next_data)?;
 
-                while self
-                    .write_waiting_blocks
-                    .contains_key(&self.next_write_index)
+                while let Some(next_data) = self.write_waiting_blocks.remove(&self.next_write_index)
                 {
-                    let mut next_data = self
-                        .write_waiting_blocks
-                        .remove(&self.next_write_index)
-                        .unwrap();
                     //eprintln!("write block 2: {}", next_data.index);
-                    self.writer.write_all(&next_data.compressed_buffer)?;
-                    self.next_write_index += 1;
-                    next_data.reset();
-                    self.block_list.push(next_data);
+                    self.add_write_index(next_data)?;
                 }
                 current_block = block_all;
             } else {
@@ -158,13 +188,17 @@ impl<W: Write> BGZFMultiThreadWriter<W> {
                 //     String::from_utf8_lossy(&block.raw_buffer[wrote_bytes..(wrote_bytes + 10)])
                 // );
                 let bytes_to_write = (block.raw_buffer.len() - wrote_bytes).min(compress_unit_size);
-                crate::write::write_block(
+                let compressed_size = crate::write::write_block(
                     &mut block.compressed_buffer,
                     &block.raw_buffer[wrote_bytes..(wrote_bytes + bytes_to_write)],
                     &mut block.compress,
                 )
                 .expect("Failed to write block");
                 wrote_bytes += bytes_to_write;
+                block.block_sizes.push(BlockSize {
+                    uncompressed_size: bytes_to_write,
+                    compressed_size,
+                });
             }
 
             //eprintln!("finished thread: {}", block.index);
@@ -172,15 +206,21 @@ impl<W: Write> BGZFMultiThreadWriter<W> {
         });
     }
 
-    pub fn close(mut self) -> Result<()> {
+    pub fn close(mut self) -> io::Result<Option<BGZFIndex>> {
         self.flush()?;
         self.writer.write_all(&crate::EOF_MARKER)?;
-        Ok(())
+        self.closed = true;
+
+        if let Some(index) = self.bgzf_index.as_mut() {
+            index.entries.pop();
+        }
+
+        Ok(self.bgzf_index.take())
     }
 }
 
 impl<W: Write> Write for BGZFMultiThreadWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut wrote_bytes = 0;
         while wrote_bytes < buf.len() {
             self.process_buffer(self.block_list.is_empty(), false)?;
@@ -200,7 +240,7 @@ impl<W: Write> Write for BGZFMultiThreadWriter<W> {
         Ok(wrote_bytes)
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
+    fn flush(&mut self) -> io::Result<()> {
         self.process_buffer(self.block_list.is_empty(), false)?;
         if self.block_list[0].raw_buffer.len() > 0 {
             self.write_current_block();
@@ -219,10 +259,12 @@ impl<W: Write> Write for BGZFMultiThreadWriter<W> {
 
 impl<W: Write> Drop for BGZFMultiThreadWriter<W> {
     fn drop(&mut self) {
-        self.flush().expect("BGZF: Flash Error");
-        self.writer
-            .write_all(&crate::EOF_MARKER)
-            .expect("BGZF: Cannot write EOF marker");
+        if !self.closed {
+            self.flush().expect("BGZF: Flash Error");
+            self.writer
+                .write_all(&crate::EOF_MARKER)
+                .expect("BGZF: Cannot write EOF marker");
+        }
     }
 }
 
@@ -246,6 +288,7 @@ mod test {
             1024,
             30,
             Compression::best(),
+            true,
         )?;
 
         let mut data = vec![0; BUF_SIZE];
@@ -262,7 +305,10 @@ mod test {
         }
         //eprintln!("wrote_bytes: {}/{}", i, wrote_bytes);
 
-        std::mem::drop(writer);
+        writer
+            .close()?
+            .unwrap()
+            .write(std::fs::File::create(format!("{}.gzi", path))?)?;
 
         let mut rand = rand_pcg::Pcg64Mcg::seed_from_u64(0x9387402456157523);
         let mut reader = flate2::read::MultiGzDecoder::new(std::fs::File::open(path)?);

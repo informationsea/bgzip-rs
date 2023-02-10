@@ -11,6 +11,8 @@ pub enum BGZFError {
     NotBGZF,
     #[error("not gzip format")]
     NotGzip,
+    #[error("Too large compress unit")]
+    TooLargeCompressUnit,
     #[error("I/O Error: {0}")]
     IoError(#[from] std::io::Error),
     #[error("Utf8 Error: {0}")]
@@ -19,8 +21,10 @@ pub enum BGZFError {
     CompressionError(#[from] crate::deflate::CompressError),
     #[error("Decompression Error: {0}")]
     DecompressionError(#[from] crate::deflate::DecompressError),
-    #[error("Error: {message:}")]
-    Other { message: &'static str },
+    #[error("Compression Level Error: {0}")]
+    CompressionLevelError(#[from] crate::deflate::CompressionLevelError),
+    #[error("Error: {0}")]
+    Other(&'static str),
 }
 
 impl Into<std::io::Error> for BGZFError {

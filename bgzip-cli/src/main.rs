@@ -8,13 +8,13 @@ use std::io::prelude::*;
 #[derive(Debug, Parser, PartialEq, Clone)]
 #[command(author, version, about)]
 struct Cli {
-    #[arg(
-        short = 'b',
-        long = "offset",
-        help = "decompress at virtual file pointer (0-based uncompressed offset)",
-        requires = "stdout"
-    )]
-    offset: Option<u64>,
+    // #[arg(
+    //     short = 'b',
+    //     long = "offset",
+    //     help = "decompress at virtual file pointer (0-based uncompressed offset)",
+    //     requires = "stdout"
+    // )]
+    // offset: Option<u64>,
     #[arg(
         short = 'c',
         long = "stdout",
@@ -25,8 +25,8 @@ struct Cli {
     decompress: bool,
     #[arg(short = 'f', long = "force", help = "overwrite files without asking")]
     force: bool,
-    // #[arg(short = 'i', long = "index", help = "compress and create BGZF index")]
-    // index: bool,
+    #[arg(short = 'i', long = "index", help = "compress and create BGZF index")]
+    index: bool,
     #[arg(
         short = 'I',
         long = "index-name",
@@ -48,13 +48,13 @@ struct Cli {
     compress_level: i32,
     // #[arg(short = 'r', long = "reindex", help = "(re)index compressed file")]
     // reindex: bool,
-    #[arg(
-        short = 's',
-        long = "size",
-        help = "decompress INT bytes (uncompressed size)",
-        requires = "offset"
-    )]
-    size: Option<u64>,
+    // #[arg(
+    //     short = 's',
+    //     long = "size",
+    //     help = "decompress INT bytes (uncompressed size)",
+    //     requires = "offset"
+    // )]
+    // size: Option<u64>,
     #[arg(short = 't', long = "test", help = "test integrity of compressed file")]
     test: bool,
     #[arg(
@@ -97,14 +97,14 @@ fn process_file(cli: &Cli, input_path: Option<&str>) -> anyhow::Result<()> {
             cli.compress_level
                 .try_into()
                 .context("Compression level must be -1 to 12")?,
-        ),
+        )?,
         _ => return Err(anyhow::anyhow!("Compression level must be -1 to 12")),
     };
 
     let mut delete_input = !cli.keep;
 
     let mut input: Box<dyn Read> = if let Some(path) = input_path {
-        if path.ends_with(".gz") {
+        if path.ends_with(".gz") && !cli.decompress {
             eprintln!("{} already has .gz suffix -- unchanged", path);
             return Ok(());
         }
@@ -115,7 +115,7 @@ fn process_file(cli: &Cli, input_path: Option<&str>) -> anyhow::Result<()> {
         Box::new(std::io::stdin().lock())
     };
 
-    let mut output: Box<dyn Write> = if let Some(path) = input_path
+    let (mut output, index_out): (Box<dyn Write>, Option<File>) = if let Some(path) = input_path
         .map(|x| if cli.stdout { None } else { Some(x) })
         .flatten()
     {
@@ -128,21 +128,34 @@ fn process_file(cli: &Cli, input_path: Option<&str>) -> anyhow::Result<()> {
         } else {
             format!("{}.gz", path)
         };
+        let index_path = if cli.index && !cli.decompress {
+            Some(
+                cli.index_name
+                    .clone()
+                    .unwrap_or_else(|| format!("{}.gzi", new_path)),
+            )
+        } else {
+            None
+        };
+
         if std::path::Path::new(new_path.as_str()).exists() && !cli.force {
             return Err(anyhow::anyhow!(
                 "{} already exists. Use -f to force overwrite.",
                 new_path
             ));
         }
-        Box::new(File::create(new_path)?)
+        (
+            Box::new(File::create(new_path)?),
+            index_path.map(|x| File::create(x)).transpose()?,
+        )
     } else {
-        if std::io::stdout().is_terminal() && !cli.force {
+        if std::io::stdout().is_terminal() && !cli.force && !cli.decompress {
             return Err(anyhow::anyhow!(
                 "compressed data not written to a terminal. Use -f to force compression."
             ));
         }
         delete_input = false;
-        Box::new(std::io::stdout().lock())
+        (Box::new(std::io::stdout().lock()), None)
     };
 
     if cli.decompress {
@@ -155,11 +168,19 @@ fn process_file(cli: &Cli, input_path: Option<&str>) -> anyhow::Result<()> {
         }
     } else {
         if cli.threads.is_some() {
-            let mut writer = BGZFMultiThreadWriter::new(&mut output, compression)?;
+            let mut writer = BGZFMultiThreadWriter::new(&mut output, compression);
             std::io::copy(&mut input, &mut writer)?;
+            let index = writer.close()?;
+            if let Some(index_out) = index_out {
+                index.unwrap().write(std::io::BufWriter::new(index_out))?;
+            }
         } else {
             let mut writer = BGZFWriter::new(&mut output, compression);
             std::io::copy(&mut input, &mut writer)?;
+            let index = writer.close()?;
+            if let Some(index_out) = index_out {
+                index.unwrap().write(std::io::BufWriter::new(index_out))?;
+            }
         }
     }
 

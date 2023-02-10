@@ -169,15 +169,11 @@ impl BGZFHeader {
         }
         let compression_method = header_data[2];
         if compression_method != DEFLATE {
-            return Err(BGZFError::Other {
-                message: "Unsupported compression method",
-            });
+            return Err(BGZFError::Other("Unsupported compression method"));
         }
         let flags = header_data[3];
         if flags | 0x1f != 0x1f {
-            return Err(BGZFError::Other {
-                message: "Unsupported flag",
-            });
+            return Err(BGZFError::Other("Unsupported flag"));
         }
         let modified_time = u32::from_le_bytes(header_data[4..8].try_into().unwrap());
         let extra_flags = header_data[8];
@@ -202,9 +198,7 @@ impl BGZFHeader {
                 remain_bytes -= 4 + sub_field_len;
             }
             if remain_bytes != 0 {
-                return Err(BGZFError::Other {
-                    message: "Invalid extra field",
-                });
+                return Err(BGZFError::Other("Invalid extra field"));
             }
 
             (Some(len), fields)

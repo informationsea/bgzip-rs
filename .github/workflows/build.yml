@@ -2,15 +2,31 @@ name: Build
 
 on:
   push:
-    branches: [master, test-actions]
+    branches: [master, test-actions, bgzip-cli]
+    tags: ["v*"]
   pull_request:
-    branches: [master]
+    branches: [master, bgzip-cli]
 
 env:
   CARGO_TERM_COLOR: always
+  APP_NAME: bgzip-rs
 
 jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Short tag
+        id: short_tag
+        if: ${{ startsWith(github.ref, 'refs/tags/v')  }}
+        run: echo "tag=$(basename ${{ github.ref }})" >> $GITHUB_OUTPUT
+      - name: Hash
+        id: hash
+        if: ${{ startsWith(github.ref, 'refs/heads/')  }}
+        run: echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+    outputs:
+      tag: ${{ steps.short_tag.outputs.tag }}${{ steps.hash.outputs.tag }}
   build:
+    needs: tag
     runs-on: ${{ matrix.config.os }}
     strategy:
       matrix:
@@ -23,9 +39,17 @@ jobs:
             target: i686-pc-windows-msvc
             test: true
             cross: false
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            test: false
+            cross: false
           - os: macos-latest
             target: x86_64-apple-darwin
             test: true
+            cross: false
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            test: false
             cross: false
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
@@ -35,6 +59,10 @@ jobs:
             target: x86_64-unknown-linux-musl
             test: true
             cross: false
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            test: false
+            cross: true
     steps:
       - name: Git config
         if: ${{ matrix.config.os == 'windows-latest' }}
@@ -75,35 +103,130 @@ jobs:
         if: ${{ matrix.config.test }}
         uses: actions-rs/cargo@v1
         with:
+          use-cross: ${{ matrix.config.cross }}
           command: test
           args: --release --target ${{ matrix.config.target }}
       - name: Test without rayon
         if: ${{ matrix.config.test }}
         uses: actions-rs/cargo@v1
         with:
+          use-cross: ${{ matrix.config.cross }}
           command: test
           args: --no-default-features --features rust_backend --release --target ${{ matrix.config.target }}
       - name: Test with zlib
         if: ${{ matrix.config.test }}
         uses: actions-rs/cargo@v1
         with:
+          use-cross: ${{ matrix.config.cross }}
           command: test
           args: --no-default-features --features zlib --release --target ${{ matrix.config.target }}
       - name: Test with zlib-ng and rayon
         if: ${{ matrix.config.test }}
         uses: actions-rs/cargo@v1
         with:
+          use-cross: ${{ matrix.config.cross }}
           command: test
           args: --no-default-features --features rayon,zlib-ng --release --target ${{ matrix.config.target }}
       - name: Test with libdeflate
         if: ${{ matrix.config.test }}
         uses: actions-rs/cargo@v1
         with:
+          use-cross: ${{ matrix.config.cross }}
           command: test
           args: --no-default-features --features libdeflater --release --target ${{ matrix.config.target }}
       - name: Test with libdeflate and rayon
         if: ${{ matrix.config.test }}
         uses: actions-rs/cargo@v1
         with:
+          use-cross: ${{ matrix.config.cross }}
           command: test
           args: --no-default-features --features rayon,libdeflater --release --target ${{ matrix.config.target }}
+      - name: Build release binary
+        uses: actions-rs/cargo@v1
+        with:
+          use-cross: ${{ matrix.config.cross }}
+          command: build
+          args: --release --bin bgzip-rs --target ${{ matrix.config.target }}
+      - name: Create release zip for UNIX
+        if: ${{ matrix.config.os != 'windows-latest' }}
+        run: |
+          mkdir -p ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}
+          cp target/${{ matrix.config.target }}/release/${{ env.APP_NAME }} ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
+          cp README.md ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
+          cp LICENSE ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
+          zip -r ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}.zip ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
+      - name: Create release zip for Windows
+        if: ${{ matrix.config.os == 'windows-latest' }}
+        run: |
+          mkdir ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}
+          cp target/${{ matrix.config.target }}/release/${{ env.APP_NAME }}.exe ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
+          cp README.md ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
+          cp LICENSE ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
+          Compress-Archive -DestinationPath ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}.zip -Path ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}/
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag}}.zip
+          path: |
+            ./${{ env.APP_NAME }}-${{ matrix.config.target }}-${{ needs.tag.outputs.tag }}.zip
+
+  release:
+    needs: [build, tag]
+    runs-on: ubuntu-latest
+    if: ${{ startsWith(github.ref, 'refs/tags/v')  }}
+    steps:
+      - name: Download artifact 1
+        uses: actions/download-artifact@v3
+        env:
+          TARGET: x86_64-pc-windows-msvc
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.TARGET }}-${{ needs.tag.outputs.tag }}.zip
+      - name: Download artifact 2
+        uses: actions/download-artifact@v3
+        env:
+          TARGET: x86_64-apple-darwin
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.TARGET }}-${{ needs.tag.outputs.tag }}.zip
+      - name: Download artifact 3
+        uses: actions/download-artifact@v3
+        env:
+          TARGET: x86_64-unknown-linux-musl
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.TARGET }}-${{ needs.tag.outputs.tag }}.zip
+      - name: Download artifact 4
+        uses: actions/download-artifact@v3
+        env:
+          TARGET: i686-pc-windows-msvc
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.TARGET }}-${{ needs.tag.outputs.tag }}.zip
+      - name: Download artifact 5
+        uses: actions/download-artifact@v3
+        env:
+          TARGET: aarch64-apple-darwin
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.TARGET }}-${{ needs.tag.outputs.tag }}.zip
+      - name: Download artifact 6
+        uses: actions/download-artifact@v3
+        env:
+          TARGET: x86_64-unknown-linux-gnu
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.TARGET }}-${{ needs.tag.outputs.tag }}.zip
+      - name: Download artifact 7
+        uses: actions/download-artifact@v3
+        env:
+          TARGET: aarch64-unknown-linux-gnu
+        with:
+          name: ${{ env.APP_NAME }}-${{ env.TARGET }}-${{ needs.tag.outputs.tag }}.zip
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ${{ env.APP_NAME }}-x86_64-pc-windows-msvc-${{ needs.tag.outputs.tag }}.zip
+            ${{ env.APP_NAME }}-i686-pc-windows-msvc-${{ needs.tag.outputs.tag }}.zip
+            ${{ env.APP_NAME }}-aarch64-pc-windows-msvc-${{ needs.tag.outputs.tag }}.zip
+            ${{ env.APP_NAME }}-x86_64-apple-darwin-${{ needs.tag.outputs.tag }}.zip
+            ${{ env.APP_NAME }}-aarch64-apple-darwin-${{ needs.tag.outputs.tag }}.zip
+            ${{ env.APP_NAME }}-x86_64-unknown-linux-musl-${{ needs.tag.outputs.tag }}.zip
+            ${{ env.APP_NAME }}-x86_64-unknown-linux-gnu-${{ needs.tag.outputs.tag }}.zip
+            ${{ env.APP_NAME }}-aarch64-unknown-linux-gnu-${{ needs.tag.outputs.tag }}.zip
+          draft: true
