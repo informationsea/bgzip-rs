@@ -33,7 +33,7 @@ fn main() -> anyhow::Result<()> {
         rayon::ThreadPoolBuilder::new()
             .num_threads(thread)
             .build_global()?;
-        Box::new(bgzip::read::BGZFMultiThreadReader::new(file_reader))
+        Box::new(bgzip::read::BGZFMultiThreadReader::new(file_reader)?)
     } else {
         Box::new(BGZFReader::new(file_reader)?)
     };

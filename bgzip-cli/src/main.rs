@@ -160,7 +160,7 @@ fn process_file(cli: &Cli, input_path: Option<&str>) -> anyhow::Result<()> {
 
     if cli.decompress {
         if cli.threads.is_some() {
-            let mut reader = BGZFMultiThreadReader::new(&mut input);
+            let mut reader = BGZFMultiThreadReader::new(&mut input)?;
             std::io::copy(&mut reader, &mut output)?;
         } else {
             let mut reader = BGZFReader::new(&mut input)?;

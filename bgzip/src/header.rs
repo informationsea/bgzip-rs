@@ -8,6 +8,7 @@ pub const GZIP_ID2: u8 = 139;
 
 pub const BGZIP_HEADER_SIZE: u16 = 20 + 6;
 
+/// Gzip extra field
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtraField {
     sub_field_id1: u8,
@@ -37,17 +38,18 @@ impl ExtraField {
     }
 
     pub fn field_len(&self) -> u16 {
-        self.data.len() as u16 + 4
+        TryInto::<u16>::try_into(self.data.len()).unwrap() + 4
     }
 
     pub fn write<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
         writer.write_all(&[self.sub_field_id1, self.sub_field_id2])?;
-        writer.write_all(&(self.data.len() as u16).to_le_bytes())?;
+        writer.write_all(&(TryInto::<u16>::try_into(self.data.len()).unwrap()).to_le_bytes())?;
         writer.write_all(&self.data)?;
         Ok(())
     }
 }
 
+/// gzip file header
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BGZFHeader {
     /// Compress Method Field.
@@ -102,6 +104,7 @@ pub const FILESYSTEM_NTFS: u8 = 11;
 pub const FILESYSTEM_UNKNOWN: u8 = 255;
 
 impl BGZFHeader {
+    /// Create new BGZF file header
     pub fn new(fast: bool, modified_time: u32, compressed_len: u16) -> Self {
         let block_size = compressed_len + BGZIP_HEADER_SIZE;
         let bgzf_field = ExtraField::new(66, 67, (block_size - 1).to_le_bytes().to_vec());
@@ -120,6 +123,7 @@ impl BGZFHeader {
         }
     }
 
+    /// Load BGZF block size    
     pub fn block_size(&self) -> Result<u16, BGZFError> {
         self.extra_field
             .iter()
@@ -132,6 +136,7 @@ impl BGZFHeader {
             .ok_or(BGZFError::NotBGZF)
     }
 
+    /// Overwrite BGZF block write
     pub fn update_block_size(&mut self, new_block_size: u16) -> Result<(), BGZFError> {
         self.extra_field
             .iter_mut()
@@ -142,6 +147,7 @@ impl BGZFHeader {
             .ok_or(BGZFError::NotBGZF)
     }
 
+    /// Calculate header size    
     pub fn header_size(&self) -> u64 {
         10u64
             + self.extra_field_len.map(|x| (x + 2).into()).unwrap_or(0)
@@ -158,6 +164,7 @@ impl BGZFHeader {
             + self.crc16.map(|_| 2).unwrap_or(0)
     }
 
+    /// Load gzip header form `reader`
     pub fn from_reader<R: io::Read>(reader: &mut R) -> Result<Self, BGZFError> {
         let mut header_data = [0u8; 10];
         reader.read_exact(&mut header_data)?;
@@ -242,6 +249,7 @@ impl BGZFHeader {
         })
     }
 
+    /// Write gzip header to `writer`
     pub fn write<W: io::Write>(&self, mut writer: W) -> io::Result<()> {
         let mut calculated_flags = self.flags & FLAG_FTEXT;
         if self.file_name.is_some() {

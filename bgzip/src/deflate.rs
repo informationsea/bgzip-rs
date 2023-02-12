@@ -12,10 +12,12 @@ pub use libdeflater::Crc;
 
 use crate::BGZFError;
 
+/// Compression Level
 #[cfg(not(feature = "libdeflater"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Compression(flate2::Compression);
 
+/// Compression Level
 #[cfg(feature = "libdeflater")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Compression(libdeflater::CompressionLvl);

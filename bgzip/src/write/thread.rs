@@ -45,6 +45,8 @@ impl WriteBlock {
 }
 
 /// A Multi-thread BGZF writer
+///
+/// [rayon](https://crates.io/crates/rayon) is used to run compression in a thread pool.
 pub struct BGZFMultiThreadWriter<W: Write> {
     writer: W,
     compress_unit_size: usize,
@@ -63,6 +65,7 @@ pub struct BGZFMultiThreadWriter<W: Write> {
 }
 
 impl<W: Write> BGZFMultiThreadWriter<W> {
+    /// Create new [`BGZFMultiThreadWriter`] from [`std::io::Read`] and [`Compression`]
     pub fn new(writer: W, level: Compression) -> Self {
         Self::with_compress_unit_size(
             writer,
@@ -74,7 +77,6 @@ impl<W: Write> BGZFMultiThreadWriter<W> {
         .expect("Unreachable (BGZFMultiThreadWriter)")
     }
 
-    /// Create new
     pub fn with_compress_unit_size(
         writer: W,
         compress_unit_size: usize,
@@ -111,7 +113,7 @@ impl<W: Write> BGZFMultiThreadWriter<W> {
         })
     }
 
-    fn add_write_index(&mut self, mut next_data: WriteBlock) -> io::Result<()> {
+    fn write_blocks(&mut self, mut next_data: WriteBlock) -> io::Result<()> {
         self.writer.write_all(&next_data.compressed_buffer)?;
         for one in &next_data.block_sizes {
             self.current_compressed_pos += TryInto::<u64>::try_into(one.compressed_size).unwrap();
@@ -152,12 +154,12 @@ impl<W: Write> BGZFMultiThreadWriter<W> {
             //     next_data.index, self.next_write_index, self.next_compress_index
             // );
             if next_data.index == self.next_write_index {
-                self.add_write_index(next_data)?;
+                self.write_blocks(next_data)?;
 
                 while let Some(next_data) = self.write_waiting_blocks.remove(&self.next_write_index)
                 {
                     //eprintln!("write block 2: {}", next_data.index);
-                    self.add_write_index(next_data)?;
+                    self.write_blocks(next_data)?;
                 }
                 current_block = block_all;
             } else {
@@ -169,7 +171,7 @@ impl<W: Write> BGZFMultiThreadWriter<W> {
         Ok(())
     }
 
-    fn write_current_block(&mut self) {
+    fn dispatch_current_block(&mut self) {
         let mut block = self.block_list.remove(0);
         block.index = self.next_compress_index;
         self.next_compress_index += 1;
@@ -207,6 +209,11 @@ impl<W: Write> BGZFMultiThreadWriter<W> {
         });
     }
 
+    /// Write end-of-file marker and close BGZF.
+    ///
+    /// Explicitly call of this method is not required unless you need .gzi index.
+    /// Drop trait will write end-of-file marker automatically.
+    /// If you need to handle I/O errors while closing, please use this method.    
     pub fn close(mut self) -> io::Result<Option<BGZFIndex>> {
         self.flush()?;
         self.writer.write_all(&crate::EOF_MARKER)?;
@@ -233,7 +240,7 @@ impl<W: Write> Write for BGZFMultiThreadWriter<W> {
                 .raw_buffer
                 .extend_from_slice(&buf[wrote_bytes..(wrote_bytes + bytes_to_write)]);
             if bytes_to_write == remain_buffer {
-                self.write_current_block();
+                self.dispatch_current_block();
             }
             wrote_bytes += bytes_to_write;
         }
@@ -244,7 +251,7 @@ impl<W: Write> Write for BGZFMultiThreadWriter<W> {
     fn flush(&mut self) -> io::Result<()> {
         self.process_buffer(self.block_list.is_empty(), false)?;
         if self.block_list[0].raw_buffer.len() > 0 {
-            self.write_current_block();
+            self.dispatch_current_block();
         }
         self.process_buffer(true, true)?;
         // eprintln!(

@@ -12,13 +12,13 @@ use crate::{deflate::*, BGZFError};
 use std::convert::TryInto;
 use std::io::{self, Write};
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BGZFWritePos {
-    block_index: u64,
-    wrote_bytes: u64,
-    position_in_block: u64,
-    block_position: Option<u64>,
-}
+// #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+// pub struct BGZFWritePos {
+//     block_index: u64,
+//     wrote_bytes: u64,
+//     position_in_block: u64,
+//     block_position: Option<u64>,
+// }
 
 /// A BGZF writer
 pub struct BGZFWriter<W: io::Write> {
@@ -49,6 +49,8 @@ impl<W: io::Write> BGZFWriter<W> {
     }
 
     /// Cerate new BGZF writer with compress unit size.
+    ///
+    /// Default value of compress unit size is 65280.
     pub fn with_compress_unit_size(
         writer: W,
         level: Compression,
@@ -76,10 +78,14 @@ impl<W: io::Write> BGZFWriter<W> {
         })
     }
 
+    /// Get BGZF virtual file offset. This position is not equal to real file offset,
+    /// but equal to virtual file offset described in [BGZF format](https://samtools.github.io/hts-specs/SAMv1.pdf).
+    /// Please read "4.1.1 Random access" to learn more.       
     pub fn bgzf_pos(&self) -> u64 {
         self.current_compressed_pos << 16 | (self.original_data.len() & 0xffff) as u64
     }
 
+    /// Current write position.
     pub fn pos(&self) -> u64 {
         self.current_uncompressed_pos + TryInto::<u64>::try_into(self.original_data.len()).unwrap()
     }
@@ -111,7 +117,8 @@ impl<W: io::Write> BGZFWriter<W> {
 
     /// Write end-of-file marker and close BGZF.
     ///
-    /// Explicitly call of this method is not required. Drop trait will write end-of-file marker automatically.
+    /// Explicitly call of this method is not required unless you need .gzi index.
+    /// Drop trait will write end-of-file marker automatically.
     /// If you need to handle I/O errors while closing, please use this method.
     pub fn close(mut self) -> io::Result<Option<BGZFIndex>> {
         if !self.closed {

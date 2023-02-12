@@ -117,6 +117,7 @@ impl<R: Read> BGZFReader<R> {
             compressed_buffer,
         })
     }
+
     /// Get BGZF virtual file offset. This position is not equal to real file offset,
     /// but equal to virtual file offset described in [BGZF format](https://samtools.github.io/hts-specs/SAMv1.pdf).
     /// Please read "4.1.1 Random access" to learn more.    
@@ -191,6 +192,7 @@ impl<R: Read> Read for BGZFReader<R> {
     }
 }
 
+/// Seekable BGZF reader.
 pub struct IndexedBGZFReader<R: Read + Seek> {
     reader: BGZFReader<R>,
     index: BGZFIndex,
@@ -199,6 +201,7 @@ pub struct IndexedBGZFReader<R: Read + Seek> {
 }
 
 impl<R: Read + Seek> IndexedBGZFReader<R> {
+    /// Create new [`IndexedBGZFReader`] from [`BGZFReader`] and [`BGZFIndex`].
     pub fn new(mut reader: BGZFReader<R>, index: BGZFIndex) -> Result<Self, BGZFError> {
         let last_entry = index
             .entries
@@ -221,6 +224,7 @@ impl<R: Read + Seek> IndexedBGZFReader<R> {
 }
 
 impl IndexedBGZFReader<std::fs::File> {
+    /// Create new [`IndexedBGZFReader`] from file path.
     pub fn from_path<P: AsRef<std::path::Path>>(path: P) -> Result<Self, BGZFError> {
         let reader = BGZFReader::new(std::fs::File::open(path.as_ref())?)?;
         let index = BGZFIndex::from_reader(std::fs::File::open(
@@ -248,7 +252,7 @@ impl<R: Read + Seek> Seek for IndexedBGZFReader<R> {
         self.reader
             .bgzf_seek(
                 self.index
-                    .pos_to_bgzf_pos(new_pos)
+                    .uncompressed_pos_to_bgzf_pos(new_pos)
                     .map_err(|x| Into::<io::Error>::into(x))?,
             )
             .map_err(|x| Into::<io::Error>::into(x))?;
@@ -418,7 +422,7 @@ mod test {
         let mut line = String::new();
         let mut line_list = Vec::new();
         let mut writer = BGZFWriter::new(
-            fs::File::create("tmp/write-pos.bed.gz")?,
+            fs::File::create("tmp/test-indexed-reader.bed.gz")?,
             Compression::default(),
         );
 

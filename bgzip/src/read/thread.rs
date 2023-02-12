@@ -31,7 +31,9 @@ impl ReadBlock {
     }
 }
 
-/// A Multi-thread BGZF writer
+/// A Multi-thread BGZF writer.
+///
+/// [rayon](https://crates.io/crates/rayon) is used to run decompression in a thread pool.
 pub struct BGZFMultiThreadReader<R: Read> {
     reader: R,
     block_list: Vec<ReadBlock>,
@@ -46,13 +48,18 @@ pub struct BGZFMultiThreadReader<R: Read> {
 }
 
 impl<R: Read> BGZFMultiThreadReader<R> {
-    pub fn new(reader: R) -> Self {
+    /// Create new [`BGZFMultiThreadReader`] from `reader`
+    pub fn new(reader: R) -> Result<Self, BGZFError> {
         Self::with_process_block_num(reader, DEFAULT_PROCESS_BLOCK_NUM)
     }
 
-    pub fn with_process_block_num(reader: R, process_block_num: usize) -> Self {
+    /// Create new [`BGZFMultiThreadReader`] from `reader` and `process_block_num`.
+    ///
+    /// `process_block_num` is the number blocks to dispatch a new thread.
+    /// Default value is 50. If you have fast CPU, larger value can be improve efficiency.
+    pub fn with_process_block_num(reader: R, process_block_num: usize) -> Result<Self, BGZFError> {
         let (tx, rx) = channel();
-        BGZFMultiThreadReader {
+        let mut reader = BGZFMultiThreadReader {
             reader,
             block_list: (0..(rayon::current_num_threads() * 2))
                 .map(|_| ReadBlock::new(process_block_num))
@@ -65,45 +72,13 @@ impl<R: Read> BGZFMultiThreadReader<R> {
             next_read_index: 0,
             next_decompress_index: 0,
             eof_read_index: u64::MAX,
-        }
+        };
+        reader.dispatch_read_thread()?;
+
+        Ok(reader)
     }
-}
 
-impl<R: Read> BufRead for BGZFMultiThreadReader<R> {
-    fn consume(&mut self, amt: usize) {
-        self.current_read_pos += amt;
-    }
-    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
-        // eprintln!(
-        //     "fill buf start: {} {} {} {}",
-        //     self.current_read_pos,
-        //     self.next_read_index,
-        //     self.current_read_buffer
-        //         .as_ref()
-        //         .map(|x| x.index)
-        //         .unwrap_or(10000000000),
-        //     self.eof_read_index
-        // );
-
-        //eprintln!("fill buf 1");
-
-        if let Some(b) = self.current_read_buffer.as_ref() {
-            if b.decompressed_data.len() <= self.current_read_pos {
-                std::mem::drop(b);
-                self.block_list
-                    .push(self.current_read_buffer.take().unwrap());
-            }
-        }
-
-        //eprintln!("fill buf 2");
-
-        if self.next_read_index > self.eof_read_index {
-            //eprintln!("EOF 0 bytes fill");
-            return Ok(&[]);
-        }
-
-        //eprintln!("fill buf 3");
-
+    fn dispatch_read_thread(&mut self) -> Result<(), BGZFError> {
         while !self.block_list.is_empty() && self.next_decompress_index < self.eof_read_index {
             let mut block = self.block_list.pop().unwrap();
             block.index = self.next_decompress_index;
@@ -158,6 +133,47 @@ impl<R: Read> BufRead for BGZFMultiThreadReader<R> {
                 // eprintln!("done: {}", i);
             });
         }
+
+        Ok(())
+    }
+}
+
+impl<R: Read> BufRead for BGZFMultiThreadReader<R> {
+    fn consume(&mut self, amt: usize) {
+        self.current_read_pos += amt;
+    }
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        // eprintln!(
+        //     "fill buf start: {} {} {} {}",
+        //     self.current_read_pos,
+        //     self.next_read_index,
+        //     self.current_read_buffer
+        //         .as_ref()
+        //         .map(|x| x.index)
+        //         .unwrap_or(10000000000),
+        //     self.eof_read_index
+        // );
+
+        //eprintln!("fill buf 1");
+
+        if let Some(b) = self.current_read_buffer.as_ref() {
+            if b.decompressed_data.len() <= self.current_read_pos {
+                std::mem::drop(b);
+                self.block_list
+                    .push(self.current_read_buffer.take().unwrap());
+            }
+        }
+
+        //eprintln!("fill buf 2");
+
+        if self.next_read_index > self.eof_read_index {
+            //eprintln!("EOF 0 bytes fill");
+            return Ok(&[]);
+        }
+
+        //eprintln!("fill buf 3");
+        self.dispatch_read_thread()
+            .map_err(|e| Into::<std::io::Error>::into(e))?;
 
         //eprintln!("fill buf 4");
 
@@ -222,7 +238,7 @@ mod test {
         // normal read
         let mut reader = BGZFMultiThreadReader::new(std::fs::File::open(
             "testfiles/common_all_20180418_half.vcf.gz",
-        )?);
+        )?)?;
 
         let mut read_buf = Vec::new();
         reader.read_to_end(&mut read_buf)?;
@@ -235,7 +251,7 @@ mod test {
                 "testfiles/common_all_20180418_half.vcf.gz",
             )?),
             1,
-        );
+        )?;
 
         let mut read_buf = Vec::new();
         reader.read_to_end(&mut read_buf)?;
@@ -245,11 +261,11 @@ mod test {
         // read 100 bytes per loop
         let mut reader = BGZFMultiThreadReader::new(std::fs::File::open(
             "testfiles/common_all_20180418_half.vcf.gz",
-        )?);
+        )?)?;
 
         let mut read_buf = Vec::new();
         loop {
-            let mut small_buf = [0; 45280];
+            let mut small_buf = [0; 100];
             let read_bytes = reader.read(&mut small_buf)?;
             if read_bytes == 0 {
                 break;

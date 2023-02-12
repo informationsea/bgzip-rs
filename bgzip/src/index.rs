@@ -1,7 +1,10 @@
+//! .gzi index support
+
 use std::convert::TryInto;
 
 use crate::{BGZFError, BinaryReader};
 
+/// Represents .gzi index file
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct BGZFIndex {
     pub(crate) entries: Vec<BGZFIndexEntry>,
@@ -12,10 +15,12 @@ impl BGZFIndex {
         BGZFIndex::default()
     }
 
+    /// List of index entries
     pub fn entries(&self) -> &[BGZFIndexEntry] {
         &self.entries
     }
 
+    /// Load .gzi index file from `reader`
     pub fn from_reader<R: std::io::Read>(mut reader: R) -> std::io::Result<Self> {
         let num_entries = reader.read_le_u64()?;
         let mut result = BGZFIndex::default();
@@ -30,6 +35,7 @@ impl BGZFIndex {
         Ok(result)
     }
 
+    /// Write .gzi index file into `writer`
     pub fn write<W: std::io::Write>(&self, mut writer: W) -> std::io::Result<()> {
         let entries: u64 = self.entries.len().try_into().unwrap();
         writer.write_all(&entries.to_le_bytes())?;
@@ -40,7 +46,8 @@ impl BGZFIndex {
         Ok(())
     }
 
-    pub fn pos_to_bgzf_pos(&self, pos: u64) -> Result<u64, BGZFError> {
+    /// Convert uncompressed position to bgzf virtual position
+    pub fn uncompressed_pos_to_bgzf_pos(&self, pos: u64) -> Result<u64, BGZFError> {
         let i = self
             .entries
             .partition_point(|x| x.uncompressed_offset <= pos);
@@ -61,7 +68,8 @@ impl BGZFIndex {
         Ok((entry.compressed_offset << 16) + ((pos - entry.uncompressed_offset) & ((1 << 16) - 1)))
     }
 
-    pub fn bgzf_pos_to_pos(&self, bgzf_pos: u64) -> Result<u64, BGZFError> {
+    /// Convert bgzf virtual position to uncompressed position
+    pub fn bgzf_pos_to_uncompressed_pos(&self, bgzf_pos: u64) -> Result<u64, BGZFError> {
         let compressed_pos = bgzf_pos >> 16;
         if compressed_pos == 0 {
             return Ok(bgzf_pos);
@@ -74,6 +82,7 @@ impl BGZFIndex {
     }
 }
 
+/// One entry of .gzi
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BGZFIndexEntry {
     pub compressed_offset: u64,
@@ -125,8 +134,14 @@ mod test {
         let index = writer.close()?.unwrap();
 
         for (bgzf_pos, uncompressed_pos, _) in &line_list {
-            assert_eq!(index.bgzf_pos_to_pos(*bgzf_pos)?, *uncompressed_pos);
-            assert_eq!(index.pos_to_bgzf_pos(*uncompressed_pos)?, *bgzf_pos);
+            assert_eq!(
+                index.bgzf_pos_to_uncompressed_pos(*bgzf_pos)?,
+                *uncompressed_pos
+            );
+            assert_eq!(
+                index.uncompressed_pos_to_bgzf_pos(*uncompressed_pos)?,
+                *bgzf_pos
+            );
         }
 
         Ok(())
