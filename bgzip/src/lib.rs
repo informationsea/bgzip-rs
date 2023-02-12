@@ -65,6 +65,7 @@ pub(crate) mod csi;
 pub(crate) mod deflate;
 /// BGZ header parser
 pub mod header;
+pub mod index;
 pub mod read;
 pub use deflate::Compression;
 /// Tabix file parser. (This module is alpha state.)
@@ -74,60 +75,7 @@ pub use error::BGZFError;
 pub use read::BGZFReader;
 pub use write::BGZFWriter;
 
-use std::{convert::TryInto, io};
-
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct BGZFIndex {
-    pub(crate) entries: Vec<BGZFIndexEntry>,
-}
-
-impl BGZFIndex {
-    pub(crate) fn new() -> Self {
-        BGZFIndex::default()
-    }
-
-    pub fn entries(&self) -> &[BGZFIndexEntry] {
-        &self.entries
-    }
-
-    pub fn from_reader<R: std::io::Read>(mut reader: R) -> std::io::Result<Self> {
-        let num_entries = reader.read_le_u64()?;
-        let mut result = BGZFIndex::default();
-        for _ in 0..num_entries {
-            let compressed_offset = reader.read_le_u64()?;
-            let uncompressed_offset = reader.read_le_u64()?;
-            result.entries.push(BGZFIndexEntry {
-                compressed_offset,
-                uncompressed_offset,
-            })
-        }
-        Ok(result)
-    }
-
-    pub fn write<W: std::io::Write>(&self, mut writer: W) -> std::io::Result<()> {
-        let entries: u64 = self.entries.len().try_into().unwrap();
-        writer.write_all(&entries.to_le_bytes())?;
-        for one in &self.entries {
-            writer.write_all(&one.compressed_offset.to_le_bytes())?;
-            writer.write_all(&one.uncompressed_offset.to_le_bytes())?;
-        }
-        Ok(())
-    }
-
-    pub fn pos_to_bgzf_pos(&self, pos: u64) -> Result<u64, BGZFError> {
-        unimplemented!()
-    }
-
-    pub fn bgzf_pos_to_pos(&self, bgzf_pos: u64) -> Result<u64, BGZFError> {
-        unimplemented!()
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BGZFIndexEntry {
-    pub compressed_offset: u64,
-    pub uncompressed_offset: u64,
-}
+use std::io;
 
 /// End-of-file maker.
 ///
@@ -186,6 +134,8 @@ impl<R: io::Read> BinaryReader for R {}
 
 #[cfg(test)]
 mod test {
+    use crate::index::BGZFIndex;
+
     use super::*;
     use std::fs;
     use std::io::{BufRead, Write};

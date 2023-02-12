@@ -7,7 +7,8 @@ mod thread;
 pub use thread::BGZFMultiThreadWriter;
 
 use crate::header::BGZFHeader;
-use crate::{deflate::*, BGZFError, BGZFIndex};
+use crate::index::{BGZFIndex, BGZFIndexEntry};
+use crate::{deflate::*, BGZFError};
 use std::convert::TryInto;
 use std::io::{self, Write};
 
@@ -99,7 +100,7 @@ impl<W: io::Write> BGZFWriter<W> {
             TryInto::<u64>::try_into(self.compressed_buffer.len()).unwrap();
 
         if let Some(index) = self.bgzf_index.as_mut() {
-            index.entries.push(crate::BGZFIndexEntry {
+            index.entries.push(BGZFIndexEntry {
                 compressed_offset: self.current_compressed_pos,
                 uncompressed_offset: self.current_uncompressed_pos,
             });

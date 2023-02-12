@@ -1,4 +1,5 @@
-use crate::{deflate::*, BGZFError, BGZFIndex};
+use crate::index::BGZFIndexEntry;
+use crate::{deflate::*, index::BGZFIndex, BGZFError};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::io::{self, Error, ErrorKind, Write};
@@ -117,7 +118,7 @@ impl<W: Write> BGZFMultiThreadWriter<W> {
             self.current_uncompressed_pos +=
                 TryInto::<u64>::try_into(one.uncompressed_size).unwrap();
             if let Some(index) = self.bgzf_index.as_mut() {
-                index.entries.push(crate::BGZFIndexEntry {
+                index.entries.push(BGZFIndexEntry {
                     compressed_offset: self.current_compressed_pos,
                     uncompressed_offset: self.current_uncompressed_pos,
                 })

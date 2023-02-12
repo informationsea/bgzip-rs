@@ -22,7 +22,7 @@ pub struct Compression(libdeflater::CompressionLvl);
 
 #[cfg(not(feature = "libdeflater"))]
 impl Compression {
-    pub const fn new(level: u32) -> Result<Self, CompressionLevelError> {
+    pub const fn new(level: u32) -> Result<Self, BGZFError> {
         Ok(Compression(flate2::Compression::new(level)))
     }
 

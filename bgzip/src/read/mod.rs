@@ -6,7 +6,8 @@ mod thread;
 #[cfg(feature = "rayon")]
 pub use thread::BGZFMultiThreadReader;
 
-use crate::{deflate::*, BGZFIndex};
+use crate::deflate::*;
+use crate::index::BGZFIndex;
 use crate::{header::BGZFHeader, BGZFError};
 use std::convert::TryInto;
 use std::io::{self, prelude::*};
@@ -193,11 +194,29 @@ impl<R: Read> Read for BGZFReader<R> {
 pub struct IndexedBGZFReader<R: Read + Seek> {
     reader: BGZFReader<R>,
     index: BGZFIndex,
+    current_pos: u64,
+    end_pos: u64,
 }
 
 impl<R: Read + Seek> IndexedBGZFReader<R> {
-    pub fn new(reader: BGZFReader<R>, index: BGZFIndex) -> Self {
-        IndexedBGZFReader { reader, index }
+    pub fn new(mut reader: BGZFReader<R>, index: BGZFIndex) -> Result<Self, BGZFError> {
+        let last_entry = index
+            .entries
+            .last()
+            .ok_or(BGZFError::Other("Invalid index file"))?
+            .clone();
+        reader.bgzf_seek(last_entry.compressed_offset << 16)?;
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf)?;
+        reader.bgzf_seek(0)?;
+        std::mem::drop(last_entry);
+
+        Ok(IndexedBGZFReader {
+            reader,
+            index,
+            current_pos: 0,
+            end_pos: last_entry.uncompressed_offset + TryInto::<u64>::try_into(buf.len()).unwrap(),
+        })
     }
 }
 
@@ -209,13 +228,31 @@ impl IndexedBGZFReader<std::fs::File> {
                 .to_str()
                 .ok_or(BGZFError::PathConvertionError)?,
         )?)?;
-        Ok(IndexedBGZFReader::new(reader, index))
+        IndexedBGZFReader::new(reader, index)
     }
 }
 
 impl<R: Read + Seek> Seek for IndexedBGZFReader<R> {
     fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
-        unimplemented!()
+        let new_pos = match pos {
+            io::SeekFrom::Current(p) => {
+                TryInto::<u64>::try_into(p + TryInto::<i64>::try_into(self.current_pos).unwrap())
+                    .unwrap()
+            }
+            io::SeekFrom::Start(p) => p,
+            io::SeekFrom::End(p) => {
+                TryInto::<u64>::try_into(TryInto::<i64>::try_into(self.end_pos).unwrap() + p)
+                    .unwrap()
+            }
+        };
+        self.reader
+            .bgzf_seek(
+                self.index
+                    .pos_to_bgzf_pos(new_pos)
+                    .map_err(|x| Into::<io::Error>::into(x))?,
+            )
+            .map_err(|x| Into::<io::Error>::into(x))?;
+        Ok(new_pos)
     }
 }
 
@@ -225,13 +262,16 @@ impl<R: Read + Seek> BufRead for IndexedBGZFReader<R> {
     }
 
     fn consume(&mut self, amt: usize) {
-        self.reader.consume(amt)
+        self.reader.consume(amt);
+        self.current_pos += TryInto::<u64>::try_into(amt).unwrap();
     }
 }
 
 impl<R: Read + Seek> Read for IndexedBGZFReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.reader.read(buf)
+        let s = self.reader.read(buf)?;
+        self.current_pos += TryInto::<u64>::try_into(s).unwrap();
+        Ok(s)
     }
 }
 
@@ -239,8 +279,11 @@ impl<R: Read + Seek> Read for IndexedBGZFReader<R> {
 mod test {
     use flate2::Crc;
 
+    use crate::BGZFWriter;
+
     use super::*;
-    use std::fs::File;
+    use rand::prelude::*;
+    use std::fs::{self, File};
 
     #[test]
     fn test_load_block() -> Result<(), BGZFError> {
@@ -363,6 +406,56 @@ mod test {
         let mut data = Vec::new();
         data_reader.read_to_end(&mut data)?;
         assert_eq!(data, expected_data);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_indexed_reader() -> anyhow::Result<()> {
+        let mut data_reader = std::io::BufReader::new(flate2::read::MultiGzDecoder::new(
+            fs::File::open("testfiles/generated.bed.gz")?,
+        ));
+        let mut line = String::new();
+        let mut line_list = Vec::new();
+        let mut writer = BGZFWriter::new(
+            fs::File::create("tmp/write-pos.bed.gz")?,
+            Compression::default(),
+        );
+
+        let mut total_len = 0;
+        loop {
+            let bgzf_pos = writer.bgzf_pos();
+            let uncompressed_pos = writer.pos();
+            line.clear();
+            let size = data_reader.read_line(&mut line)?;
+            if size == 0 {
+                break;
+            }
+            writer.write_all(&line.as_bytes())?;
+            total_len += line.as_bytes().len();
+            line_list.push((bgzf_pos, uncompressed_pos, line.clone()));
+        }
+        let index = writer.close()?.unwrap();
+
+        let mut rand = rand_pcg::Pcg64Mcg::seed_from_u64(0x9387402456157523);
+        let mut reader = IndexedBGZFReader::new(
+            BGZFReader::new(fs::File::open("tmp/test-indexed-reader.bed.gz")?)?,
+            index,
+        )?;
+
+        line.clear();
+        reader.read_line(&mut line)?;
+        assert_eq!(line, line_list[0].2);
+
+        for _ in 0..300 {
+            let i = rand.gen_range(0..line_list.len());
+            reader.seek(std::io::SeekFrom::Start(line_list[i].1))?;
+            line.clear();
+            reader.read_line(&mut line)?;
+            assert_eq!(line, line_list[i].2);
+        }
+
+        assert_eq!(TryInto::<u64>::try_into(total_len).unwrap(), reader.end_pos);
 
         Ok(())
     }
