@@ -6,7 +6,7 @@ mod thread;
 #[cfg(feature = "rayon")]
 pub use thread::BGZFMultiThreadReader;
 
-use crate::deflate::*;
+use crate::{deflate::*, BGZFIndex};
 use crate::{header::BGZFHeader, BGZFError};
 use std::convert::TryInto;
 use std::io::{self, prelude::*};
@@ -187,6 +187,51 @@ impl<R: Read> Read for BGZFReader<R> {
         self.consume(bytes_to_copy);
         //eprintln!("read end: {}", bytes_to_copy);
         Ok(bytes_to_copy)
+    }
+}
+
+pub struct IndexedBGZFReader<R: Read + Seek> {
+    reader: BGZFReader<R>,
+    index: BGZFIndex,
+}
+
+impl<R: Read + Seek> IndexedBGZFReader<R> {
+    pub fn new(reader: BGZFReader<R>, index: BGZFIndex) -> Self {
+        IndexedBGZFReader { reader, index }
+    }
+}
+
+impl IndexedBGZFReader<std::fs::File> {
+    pub fn from_path<P: AsRef<std::path::Path>>(path: P) -> Result<Self, BGZFError> {
+        let reader = BGZFReader::new(std::fs::File::open(path.as_ref())?)?;
+        let index = BGZFIndex::from_reader(std::fs::File::open(
+            path.as_ref()
+                .to_str()
+                .ok_or(BGZFError::PathConvertionError)?,
+        )?)?;
+        Ok(IndexedBGZFReader::new(reader, index))
+    }
+}
+
+impl<R: Read + Seek> Seek for IndexedBGZFReader<R> {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        unimplemented!()
+    }
+}
+
+impl<R: Read + Seek> BufRead for IndexedBGZFReader<R> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        self.reader.fill_buf()
+    }
+
+    fn consume(&mut self, amt: usize) {
+        self.reader.consume(amt)
+    }
+}
+
+impl<R: Read + Seek> Read for IndexedBGZFReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.reader.read(buf)
     }
 }
 

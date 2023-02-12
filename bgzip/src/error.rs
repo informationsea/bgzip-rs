@@ -17,12 +17,14 @@ pub enum BGZFError {
     IoError(#[from] std::io::Error),
     #[error("Utf8 Error: {0}")]
     Utf8Error(#[from] std::str::Utf8Error),
+    #[error("Failed to convert native path to UTF-8")]
+    PathConvertionError,
     #[error("Compression Error: {0}")]
     CompressionError(#[from] crate::deflate::CompressError),
     #[error("Decompression Error: {0}")]
     DecompressionError(#[from] crate::deflate::DecompressError),
-    #[error("Compression Level Error: {0}")]
-    CompressionLevelError(#[from] crate::deflate::CompressionLevelError),
+    #[error("Invalid Compression Level")]
+    InvalidCompressionLevel,
     #[error("Error: {0}")]
     Other(&'static str),
 }

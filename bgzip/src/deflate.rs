@@ -10,11 +10,7 @@ pub use flate2::Crc;
 #[cfg(feature = "libdeflater")]
 pub use libdeflater::Crc;
 
-#[derive(Debug, Clone, Copy, Error)]
-pub enum CompressionLevelError {
-    #[error("Invalid compression level")]
-    InvalidValue,
-}
+use crate::BGZFError;
 
 #[cfg(not(feature = "libdeflater"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,11 +44,11 @@ impl From<flate2::Compression> for Compression {
 
 #[cfg(feature = "libdeflater")]
 impl Compression {
-    pub fn new(level: u32) -> Result<Self, CompressionLevelError> {
+    pub fn new(level: u32) -> Result<Self, BGZFError> {
         Ok(Compression(
             libdeflater::CompressionLvl::new(level.try_into().unwrap()).map_err(|e| match e {
                 libdeflater::CompressionLvlError::InvalidValue => {
-                    CompressionLevelError::InvalidValue
+                    BGZFError::InvalidCompressionLevel
                 }
             })?,
         ))

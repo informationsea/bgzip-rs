@@ -1,8 +1,11 @@
 //! bgzip-rs
 //! ========
 //! [![Build](https://github.com/informationsea/bgzip-rs/actions/workflows/build.yml/badge.svg)](https://github.com/informationsea/bgzip-rs/actions/workflows/build.yml)
-//! [![Creates.io](http://meritbadge.herokuapp.com/bgzip)](https://crates.io/crates/bgzip)
+//! [![Crates.io](https://img.shields.io/crates/v/bgzip)](https://crates.io/crates/bgzip)
+//! [![Crates.io](https://img.shields.io/crates/d/bgzip)](https://crates.io/crates/bgzip)
+//! [![Crates.io](https://img.shields.io/crates/l/bgzip)](https://crates.io/crates/bgzip)
 //! [![doc-rs](https://docs.rs/bgzip/badge.svg)](https://docs.rs/bgzip)
+//!
 //!
 //! Rust implementation of [BGZF format](https://samtools.github.io/hts-specs/SAMv1.pdf)
 //!
@@ -63,7 +66,7 @@ pub(crate) mod deflate;
 /// BGZ header parser
 pub mod header;
 pub mod read;
-pub use deflate::{Compression, CompressionLevelError};
+pub use deflate::Compression;
 /// Tabix file parser. (This module is alpha state.)
 pub mod tabix;
 pub mod write;
@@ -75,12 +78,16 @@ use std::{convert::TryInto, io};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct BGZFIndex {
-    pub entries: Vec<BGZFIndexEntry>,
+    pub(crate) entries: Vec<BGZFIndexEntry>,
 }
 
 impl BGZFIndex {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         BGZFIndex::default()
+    }
+
+    pub fn entries(&self) -> &[BGZFIndexEntry] {
+        &self.entries
     }
 
     pub fn from_reader<R: std::io::Read>(mut reader: R) -> std::io::Result<Self> {
@@ -105,6 +112,14 @@ impl BGZFIndex {
             writer.write_all(&one.uncompressed_offset.to_le_bytes())?;
         }
         Ok(())
+    }
+
+    pub fn pos_to_bgzf_pos(&self, pos: u64) -> Result<u64, BGZFError> {
+        unimplemented!()
+    }
+
+    pub fn bgzf_pos_to_pos(&self, bgzf_pos: u64) -> Result<u64, BGZFError> {
+        unimplemented!()
     }
 }
 
