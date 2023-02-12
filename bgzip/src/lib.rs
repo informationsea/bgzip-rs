@@ -14,12 +14,12 @@
 //!
 //! * `rayon`: Enable [rayon](https://github.com/rayon-rs/rayon) based multi-threaded writer. This is default feature.
 //! * `log`: Enable [log](https://github.com/rust-lang/log) crate to log warnings. This is default feature.
-//! * `rust_backend`: use `miniz_oxide` crate for [flate2](https://github.com/rust-lang/flate2-rs) backend. This is default feature.
+//! * `rust_backend`: use use [miniz_oxide](https://crates.io/crates/miniz_oxide) crate for [flate2](https://github.com/rust-lang/flate2-rs) backend. This is default feature.
 //! * `zlib`: use `zlib` for flate2 backend. Please read [flate2](https://github.com/rust-lang/flate2-rs) description for the detail.
 //! * `zlib-ng`: use `zlib-ng` for flate2 backend. Please read [flate2](https://github.com/rust-lang/flate2-rs) description for the detail.
 //! * `zlib-ng-compat`: Please read [flate2](https://github.com/rust-lang/flate2-rs) description for the detail.
 //! * `cloudflare_zlib`: Please read [flate2](https://github.com/rust-lang/flate2-rs) description for the detail.
-//! * `libdeflater`: use `libdeflater` instead of `flate2` crate.
+//! * `libdeflater`: use [libdeflater](https://github.com/adamkewley/libdeflater) instead of [flate2](https://github.com/rust-lang/flate2-rs) crate.
 //!
 //! Write Examples
 //! --------
