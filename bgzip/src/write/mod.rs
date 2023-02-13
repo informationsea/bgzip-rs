@@ -179,9 +179,6 @@ const FOOTER_SIZE: usize = 8;
 /// Write single BGZF block to writer.
 ///
 /// This function is useful when writing your own parallelized BGZF writer.
-/// `temporary_buffer` and `compress` will be cleared before using them.
-/// `temporary_buffer` must be reserved enough size to store compressed data.
-/// `compress` must be initialized without zlib_header flag.
 pub fn write_block(
     compressed_data: &mut Vec<u8>,
     original_data: &[u8],

@@ -29,8 +29,6 @@ pub fn load_block<R: Read>(mut reader: R, buffer: &mut Vec<u8>) -> Result<BGZFHe
 /// Decompress single BGZF block from buffer. The buffer should be loaded with [`load_block`] function.
 ///
 /// This function is useful when writing your own parallelized BGZF reader.
-/// `uncompressed_data`, `decompress` and `crc` will be cleared before using them.
-/// `uncompressed_data` must be reserved enough size to store uncompressed data.
 pub fn decompress_block(
     decompressed_data: &mut Vec<u8>,
     compressed_block: &[u8],
