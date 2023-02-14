@@ -1,3 +1,7 @@
+//! Binding to DEFLATE library.
+//!
+//! [libdeflater](https://crates.io/crates/libdeflater) or [flate2](https://crates.io/crates/flate2) is used to compress/decompress data.
+
 use std::convert::TryInto;
 use thiserror::Error;
 
@@ -79,6 +83,7 @@ impl Default for Compression {
     }
 }
 
+/// Compression Error
 #[derive(Debug, Error, Clone, PartialEq)]
 pub enum CompressError {
     #[error("Insufficient spcae")]
@@ -87,6 +92,7 @@ pub enum CompressError {
     Other(String),
 }
 
+/// flate2 based compressor
 #[cfg(not(feature = "libdeflater"))]
 #[derive(Debug)]
 pub struct Compress(flate2::Compress);
@@ -119,6 +125,7 @@ impl Compress {
     }
 }
 
+/// libdeflater based compressor
 #[cfg(feature = "libdeflater")]
 pub struct Compress(libdeflater::Compressor);
 
@@ -153,6 +160,7 @@ pub enum DecompressError {
     Other(String),
 }
 
+/// flate2 based decompressor
 #[cfg(not(feature = "libdeflater"))]
 #[derive(Debug)]
 pub struct Decompress(flate2::Decompress);
@@ -186,6 +194,7 @@ impl Decompress {
     }
 }
 
+/// libdeflater based decompressor
 #[cfg(feature = "libdeflater")]
 pub struct Decompress(libdeflater::Decompressor);
 

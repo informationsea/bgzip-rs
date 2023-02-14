@@ -62,7 +62,7 @@
 mod error;
 
 pub(crate) mod csi;
-pub(crate) mod deflate;
+pub mod deflate;
 /// BGZ header parser
 pub mod header;
 pub mod index;
