@@ -150,6 +150,7 @@ impl Compress {
     }
 }
 
+/// Decompress Error
 #[derive(Debug, Error, Clone, PartialEq)]
 pub enum DecompressError {
     #[error("Decompress Error: Insufficient spcae")]
