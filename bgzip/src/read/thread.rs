@@ -158,7 +158,6 @@ impl<R: Read> BufRead for BGZFMultiThreadReader<R> {
 
         if let Some(b) = self.current_read_buffer.as_ref() {
             if b.decompressed_data.len() <= self.current_read_pos {
-                std::mem::drop(b);
                 self.block_list
                     .push(self.current_read_buffer.take().unwrap());
             }

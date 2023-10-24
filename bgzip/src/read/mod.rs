@@ -38,10 +38,10 @@ pub fn decompress_block(
     let mut crc = Crc::new();
 
     let expected_len_data = [
-        compressed_block[(compressed_block.len() - 4)],
-        compressed_block[(compressed_block.len() - 3)],
-        compressed_block[(compressed_block.len() - 2)],
-        compressed_block[(compressed_block.len() - 1)],
+        compressed_block[compressed_block.len() - 4],
+        compressed_block[compressed_block.len() - 3],
+        compressed_block[compressed_block.len() - 2],
+        compressed_block[compressed_block.len() - 1],
     ];
     let expected_len: usize = u32::from_le_bytes(expected_len_data).try_into().unwrap();
     decompressed_data.resize(original_decompress_data_len + expected_len, 0);
@@ -52,10 +52,10 @@ pub fn decompress_block(
     )?;
 
     let expected_crc_data = [
-        compressed_block[(compressed_block.len() - 8)],
-        compressed_block[(compressed_block.len() - 7)],
-        compressed_block[(compressed_block.len() - 6)],
-        compressed_block[(compressed_block.len() - 5)],
+        compressed_block[compressed_block.len() - 8],
+        compressed_block[compressed_block.len() - 7],
+        compressed_block[compressed_block.len() - 6],
+        compressed_block[compressed_block.len() - 5],
     ];
 
     let expected_crc = u32::from_le_bytes(expected_crc_data);
@@ -210,7 +210,6 @@ impl<R: Read + Seek> IndexedBGZFReader<R> {
         let mut buf = Vec::new();
         reader.read_to_end(&mut buf)?;
         reader.bgzf_seek(0)?;
-        std::mem::drop(last_entry);
 
         Ok(IndexedBGZFReader {
             reader,
