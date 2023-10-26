@@ -15,6 +15,7 @@ use std::path::Path;
 
 enum AdaptiveReader<R: BufRead> {
     Plain(R),
+    #[cfg(feature = "flate2")]
     Gzip(io::BufReader<flate2::read::MultiGzDecoder<R>>),
     Bgzip(BGZFReader<R>),
 }
@@ -23,6 +24,7 @@ impl<R: BufRead> Read for AdaptiveReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
             AdaptiveReader::Plain(reader) => reader.read(buf),
+            #[cfg(feature = "flate2")]
             AdaptiveReader::Gzip(reader) => reader.read(buf),
             AdaptiveReader::Bgzip(reader) => reader.read(buf),
         }
@@ -33,6 +35,7 @@ impl<R: BufRead> BufRead for AdaptiveReader<R> {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
         match self {
             AdaptiveReader::Plain(reader) => reader.fill_buf(),
+            #[cfg(feature = "flate2")]
             AdaptiveReader::Gzip(reader) => reader.fill_buf(),
             AdaptiveReader::Bgzip(reader) => reader.fill_buf(),
         }
@@ -41,6 +44,7 @@ impl<R: BufRead> BufRead for AdaptiveReader<R> {
     fn consume(&mut self, amt: usize) {
         match self {
             AdaptiveReader::Plain(reader) => reader.consume(amt),
+            #[cfg(feature = "flate2")]
             AdaptiveReader::Gzip(reader) => reader.consume(amt),
             AdaptiveReader::Bgzip(reader) => reader.consume(amt),
         }
@@ -68,9 +72,14 @@ pub fn new_reader<R: BufRead>(mut reader: R) -> Result<impl BufRead, BGZFError> 
                 return Ok(AdaptiveReader::Bgzip(BGZFReader::new(reader)?));
             }
         }
-        Ok(AdaptiveReader::Gzip(io::BufReader::new(
+        #[cfg(feature = "flate2")]
+        return Ok(AdaptiveReader::Gzip(io::BufReader::new(
             flate2::read::MultiGzDecoder::new(reader),
-        )))
+        )));
+        #[cfg(not(feature = "flate2"))]
+        return Err(crate::error::BGZFError::Other(
+            "Standard gzip is not supported",
+        ));
     } else {
         Ok(AdaptiveReader::Plain(reader))
     }
