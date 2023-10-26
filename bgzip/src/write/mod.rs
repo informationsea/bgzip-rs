@@ -404,4 +404,20 @@ mod test {
 
         Ok(())
     }
+
+    #[test]
+    fn test_create() -> anyhow::Result<()> {
+        let data = include_bytes!("../../testfiles/reg2bin.c");
+        let mut writer = create("tmp/test_create.txt.gz")?;
+        writer.write_all(&data[..])?;
+        std::mem::drop(writer);
+
+        let mut reader =
+            flate2::read::MultiGzDecoder::new(fs::File::open("tmp/test_create.txt.gz")?);
+        let mut buffer = Vec::new();
+        reader.read_to_end(&mut buffer)?;
+        assert_eq!(buffer, data);
+
+        Ok(())
+    }
 }

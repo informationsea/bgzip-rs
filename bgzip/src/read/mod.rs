@@ -66,7 +66,7 @@ pub fn open<P: AsRef<Path>>(path: P) -> io::Result<impl BufRead> {
 /// File format is detected by header of file, not by file extension.
 pub fn new_reader<R: BufRead>(mut reader: R) -> Result<impl BufRead, BGZFError> {
     let magics = reader.fill_buf()?;
-    if magics[0] == crate::header::GZIP_ID1 && magics[0] == crate::header::GZIP_ID2 {
+    if magics[0] == crate::header::GZIP_ID1 && magics[1] == crate::header::GZIP_ID2 {
         if let Ok(header) = crate::header::BGZFHeader::from_reader(&magics[..]) {
             if header.block_size().is_ok() {
                 return Ok(AdaptiveReader::Bgzip(BGZFReader::new(reader)?));
@@ -530,6 +530,59 @@ mod test {
         }
 
         assert_eq!(TryInto::<u64>::try_into(total_len).unwrap(), reader.end_pos);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_adaptive_open() -> anyhow::Result<()> {
+        let mut expected_data = Vec::new();
+        let mut expected_data_reader = flate2::read::MultiGzDecoder::new(File::open(
+            "testfiles/common_all_20180418_half.vcf.gz",
+        )?);
+        expected_data_reader.read_to_end(&mut expected_data)?;
+
+        let mut reader = open("testfiles/common_all_20180418_half.vcf.gz")?;
+        let mut read_data = Vec::new();
+        reader.read_to_end(&mut read_data)?;
+
+        assert_eq!(read_data.len(), expected_data.len());
+        assert_eq!(read_data, expected_data);
+
+        Ok(())
+    }
+
+    #[cfg(feature = "flate2")]
+    #[test]
+    fn test_adaptive_open2() -> anyhow::Result<()> {
+        let mut expected_data = Vec::new();
+        let mut expected_data_reader = flate2::read::MultiGzDecoder::new(File::open(
+            "testfiles/common_all_20180418_half.vcf.nobgzip.gz",
+        )?);
+        expected_data_reader.read_to_end(&mut expected_data)?;
+
+        let mut reader = open("testfiles/common_all_20180418_half.vcf.nobgzip.gz")?;
+        let mut read_data = Vec::new();
+        reader.read_to_end(&mut read_data)?;
+
+        assert_eq!(read_data.len(), expected_data.len());
+        assert_eq!(read_data, expected_data);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_adaptive_open3() -> anyhow::Result<()> {
+        let mut expected_data = Vec::new();
+        let mut expected_data_reader = File::open("testfiles/reg2bin.c")?;
+        expected_data_reader.read_to_end(&mut expected_data)?;
+
+        let mut reader = open("testfiles/reg2bin.c")?;
+        let mut read_data = Vec::new();
+        reader.read_to_end(&mut read_data)?;
+
+        assert_eq!(read_data.len(), expected_data.len());
+        assert_eq!(read_data, expected_data);
 
         Ok(())
     }
