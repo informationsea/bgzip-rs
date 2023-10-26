@@ -11,14 +11,49 @@ use crate::index::{BGZFIndex, BGZFIndexEntry};
 use crate::{deflate::*, BGZFError};
 use std::convert::TryInto;
 use std::io::{self, Write};
+use std::path::Path;
 
-// #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-// pub struct BGZFWritePos {
-//     block_index: u64,
-//     wrote_bytes: u64,
-//     position_in_block: u64,
-//     block_position: Option<u64>,
-// }
+enum AdaptiveWriter<W: Write> {
+    Plain(io::BufWriter<W>),
+    BGZF(BGZFWriter<W>),
+}
+
+impl<W: Write> Write for AdaptiveWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            AdaptiveWriter::Plain(x) => x.write(buf),
+            AdaptiveWriter::BGZF(x) => x.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            AdaptiveWriter::Plain(x) => x.flush(),
+            AdaptiveWriter::BGZF(x) => x.flush(),
+        }
+    }
+}
+
+/// Select writer type from file extension.
+///
+/// If file extension is `.gz`, BGZF writer will be selected. Otherwise, plain writer will be selected.
+pub fn create<P: AsRef<Path>>(path: P) -> io::Result<impl Write> {
+    if path
+        .as_ref()
+        .extension()
+        .map(|s| s == "gz")
+        .unwrap_or(false)
+    {
+        Ok(AdaptiveWriter::BGZF(BGZFWriter::new(
+            std::fs::File::create(path)?,
+            Compression::default(),
+        )))
+    } else {
+        Ok(AdaptiveWriter::Plain(io::BufWriter::new(
+            std::fs::File::create(path)?,
+        )))
+    }
+}
 
 /// A BGZF writer
 pub struct BGZFWriter<W: io::Write> {

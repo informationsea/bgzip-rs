@@ -165,7 +165,7 @@ impl BGZFHeader {
     }
 
     /// Load gzip header form `reader`
-    pub fn from_reader<R: io::Read>(reader: &mut R) -> Result<Self, BGZFError> {
+    pub fn from_reader<R: io::Read>(mut reader: R) -> Result<Self, BGZFError> {
         let mut header_data = [0u8; 10];
         reader.read_exact(&mut header_data)?;
 

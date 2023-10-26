@@ -73,6 +73,8 @@ pub mod tabix;
 pub mod write;
 pub use error::BGZFError;
 pub use read::BGZFReader;
+pub use read::{new_reader, open};
+pub use write::create;
 pub use write::BGZFWriter;
 
 use std::io;

@@ -11,6 +11,70 @@ use crate::index::BGZFIndex;
 use crate::{header::BGZFHeader, BGZFError};
 use std::convert::TryInto;
 use std::io::{self, prelude::*};
+use std::path::Path;
+
+enum AdaptiveReader<R: BufRead> {
+    Plain(R),
+    Gzip(io::BufReader<flate2::read::MultiGzDecoder<R>>),
+    Bgzip(BGZFReader<R>),
+}
+
+impl<R: BufRead> Read for AdaptiveReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            AdaptiveReader::Plain(reader) => reader.read(buf),
+            AdaptiveReader::Gzip(reader) => reader.read(buf),
+            AdaptiveReader::Bgzip(reader) => reader.read(buf),
+        }
+    }
+}
+
+impl<R: BufRead> BufRead for AdaptiveReader<R> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        match self {
+            AdaptiveReader::Plain(reader) => reader.fill_buf(),
+            AdaptiveReader::Gzip(reader) => reader.fill_buf(),
+            AdaptiveReader::Bgzip(reader) => reader.fill_buf(),
+        }
+    }
+
+    fn consume(&mut self, amt: usize) {
+        match self {
+            AdaptiveReader::Plain(reader) => reader.consume(amt),
+            AdaptiveReader::Gzip(reader) => reader.consume(amt),
+            AdaptiveReader::Bgzip(reader) => reader.consume(amt),
+        }
+    }
+}
+
+/// Open BGZF or plain file file from path.
+///
+/// This function automatically detect input file format from gzip, bgzip and plain text, and return suitable reader.
+/// File format is detected by header of file, not by file extension.
+pub fn open<P: AsRef<Path>>(path: P) -> io::Result<impl BufRead> {
+    let reader = io::BufReader::new(std::fs::File::open(path)?);
+    new_reader(reader).map_err(|e| e.into_io_error())
+}
+
+/// Select suitable decompressor from [`std::io::BufRead`].
+///
+/// This function automatically detect input file format from gzip, bgzip and plain text, and return suitable reader.
+/// File format is detected by header of file, not by file extension.
+pub fn new_reader<R: BufRead>(mut reader: R) -> Result<impl BufRead, BGZFError> {
+    let magics = reader.fill_buf()?;
+    if magics[0] == crate::header::GZIP_ID1 && magics[0] == crate::header::GZIP_ID2 {
+        if let Ok(header) = crate::header::BGZFHeader::from_reader(&magics[..]) {
+            if header.block_size().is_ok() {
+                return Ok(AdaptiveReader::Bgzip(BGZFReader::new(reader)?));
+            }
+        }
+        Ok(AdaptiveReader::Gzip(io::BufReader::new(
+            flate2::read::MultiGzDecoder::new(reader),
+        )))
+    } else {
+        Ok(AdaptiveReader::Plain(reader))
+    }
+}
 
 /// Load single block from reader.
 ///
