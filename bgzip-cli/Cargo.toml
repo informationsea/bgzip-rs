@@ -7,7 +7,11 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.1.4", features = ["derive", "cargo"] }
-bgzip = { path = "../bgzip", features = ["libdeflater", "log", "rayon"], default-features = false }
+bgzip = { path = "../bgzip", features = [
+    "libdeflater",
+    "log",
+    "rayon",
+], default-features = false }
 rayon = "1.6.1"
 anyhow = "1.0.69"
 is-terminal = "0.4.3"

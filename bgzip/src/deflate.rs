@@ -116,7 +116,9 @@ impl Compress {
                 compressed_data,
                 flate2::FlushCompress::Finish,
             )
-            .map_err(|e| CompressError::Other(e.message().unwrap_or("Unkown error").to_string()))?;
+            .map_err(|e| {
+                CompressError::Other(e.message().unwrap_or("Unknown error").to_string())
+            })?;
         match status {
             flate2::Status::BufError => Err(CompressError::InsufficientSpace),
             flate2::Status::Ok => Err(CompressError::InsufficientSpace),
