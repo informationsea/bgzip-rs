@@ -66,7 +66,10 @@ pub mod deflate;
 /// BGZ header parser
 pub mod header;
 pub mod index;
+#[cfg(feature = "rayon")]
+pub(crate) mod rayon;
 pub mod read;
+
 pub use deflate::Compression;
 /// Tabix file parser. (This module is alpha state.)
 pub mod tabix;

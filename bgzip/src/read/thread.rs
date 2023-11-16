@@ -3,6 +3,7 @@ use std::io::{BufRead, Read};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use crate::deflate::*;
+use crate::rayon::receive_or_yield;
 use crate::BGZFError;
 
 const EOF_BLOCK: [u8; 10] = [3, 0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -183,9 +184,7 @@ impl<R: Read> BufRead for BGZFMultiThreadReader<R> {
             }
 
             while !self.read_waiting_blocks.contains_key(&self.next_read_index) {
-                let block = self
-                    .reader_receiver
-                    .recv()
+                let block = receive_or_yield(&self.reader_receiver)
                     .expect("reader receive error")
                     .map_err(|e| -> std::io::Error { e.into() })?;
                 // eprintln!("fetch: {}", block.index);
@@ -226,6 +225,43 @@ impl<R: Read> Read for BGZFMultiThreadReader<R> {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_many_data() -> anyhow::Result<()> {
+        let mut expected_reader = flate2::read::MultiGzDecoder::new(std::fs::File::open(
+            "testfiles/common_all_20180418_half.vcf.gz",
+        )?);
+        let mut expected_buf = Vec::new();
+        expected_reader.read_to_end(&mut expected_buf)?;
+        const LOOP_NUM: usize = 100;
+        let expected_buf: &'static [u8] = Box::leak(expected_buf.into_boxed_slice());
+
+        let (tx, rx) = channel();
+        for i in 0..LOOP_NUM {
+            let tx = tx.clone();
+            rayon::spawn(move || {
+                //eprintln!("start");
+                let mut reader = BGZFMultiThreadReader::new(
+                    std::fs::File::open("testfiles/common_all_20180418_half.vcf.gz").unwrap(),
+                )
+                .unwrap();
+                //eprintln!("open");
+                let mut read_buf = Vec::new();
+                reader.read_to_end(&mut read_buf).unwrap();
+                //eprintln!("end");
+                assert_eq!(expected_buf.len(), read_buf.len());
+                assert_eq!(expected_buf, read_buf);
+                tx.send(i).unwrap();
+            });
+        }
+
+        for _i in 0..LOOP_NUM {
+            eprintln!("Finish {} / {}", rx.recv()?, _i);
+        }
+
+        Ok(())
+    }
+
     #[test]
     fn test_thread_read() -> anyhow::Result<()> {
         let mut expected_reader = flate2::read::MultiGzDecoder::new(std::fs::File::open(

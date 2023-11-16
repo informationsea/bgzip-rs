@@ -1,4 +1,5 @@
 use crate::index::BGZFIndexEntry;
+use crate::rayon::receive_or_yield;
 use crate::{deflate::*, index::BGZFIndex, BGZFError};
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -137,8 +138,7 @@ impl<W: Write> BGZFMultiThreadWriter<W> {
         let mut current_block = block;
         while self.next_compress_index != self.next_write_index {
             let next_data = if current_block {
-                self.writer_receiver
-                    .recv()
+                receive_or_yield(&self.writer_receiver)
                     .map_err(|_| Error::new(ErrorKind::Other, "Closed channel"))?
             } else {
                 match self.writer_receiver.try_recv() {
@@ -285,6 +285,46 @@ mod test {
 
     const WRITE_UNIT: usize = 2000;
     const BUF_SIZE: usize = 1000 * 1000 * 10;
+
+    #[test]
+    fn test_write_many() -> anyhow::Result<()> {
+        let mut reader = flate2::read::MultiGzDecoder::new(std::fs::File::open(
+            "testfiles/common_all_20180418_half.vcf.gz",
+        )?);
+        let mut write_data = Vec::new();
+        reader.read_to_end(&mut write_data)?;
+        const LOOP_NUM: usize = 100;
+        let expected_buf: &'static [u8] = Box::leak(write_data.into_boxed_slice());
+        let (tx, rx) = channel();
+
+        for i in 0..LOOP_NUM {
+            let tx = tx.clone();
+            rayon::spawn(move || {
+                let mut to_write_buf = Vec::new();
+                let mut writer =
+                    BGZFMultiThreadWriter::new(&mut to_write_buf, Compression::default());
+                writer.write_all(expected_buf).expect("Failed to write");
+                writer.flush().expect("Failed to flush");
+                std::mem::drop(writer);
+
+                let mut to_read_buf = Vec::new();
+                let mut reader = flate2::read::MultiGzDecoder::new(&to_write_buf[..]);
+                reader
+                    .read_to_end(&mut to_read_buf)
+                    .expect("Failed to read");
+
+                assert_eq!(to_read_buf.len(), expected_buf.len());
+                assert_eq!(to_read_buf, expected_buf);
+
+                tx.send(i).unwrap();
+            });
+        }
+
+        for _i in 0..LOOP_NUM {
+            eprintln!("Finish {} / {}", rx.recv()?, _i);
+        }
+        Ok(())
+    }
 
     #[test]
     fn test_thread_writer() -> anyhow::Result<()> {
