@@ -115,7 +115,7 @@ impl<W: io::Write> BGZFWriter<W> {
 
     /// Get BGZF virtual file offset. This position is not equal to real file offset,
     /// but equal to virtual file offset described in [BGZF format](https://samtools.github.io/hts-specs/SAMv1.pdf).
-    /// Please read "4.1.1 Random access" to learn more.       
+    /// Please read "4.1.1 Random access" to learn more.
     pub fn bgzf_pos(&self) -> u64 {
         self.current_compressed_pos << 16 | (self.original_data.len() & 0xffff) as u64
     }
@@ -416,6 +416,26 @@ mod test {
             flate2::read::MultiGzDecoder::new(fs::File::open("tmp/test_create.txt.gz")?);
         let mut buffer = Vec::new();
         reader.read_to_end(&mut buffer)?;
+        assert_eq!(buffer, data);
+
+        Ok(())
+    }
+
+    #[test]
+    fn write_flush_close() -> anyhow::Result<()> {
+        let data = "Hello, BGZF!";
+        let mut writer = BGZFWriter::new(
+            fs::File::create("tmp/flush_close.txt.gz")?,
+            Compression::default(),
+        );
+        writer.write_all(data.as_bytes())?;
+        writer.flush()?;
+        let _index = writer.close()?;
+
+        let mut reader =
+            flate2::read::MultiGzDecoder::new(fs::File::open("tmp/flush_close.txt.gz")?);
+        let mut buffer = String::new();
+        reader.read_to_string(&mut buffer)?;
         assert_eq!(buffer, data);
 
         Ok(())
